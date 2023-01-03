@@ -310,8 +310,8 @@ the same package."
                                   parent-node
                                   '((selector_expression operand: (_) @operand
                                                          field: (_) @field)))))
-                            (when (and (equal (alist-get 'operand expr-capture) pkg-name)
-                                       (equal (alist-get 'field expr-capture) symbol))
+                            (when (and (equal (treesit-node-text (alist-get 'operand expr-capture)) pkg-name)
+                                       (equal (treesit-node-text (alist-get 'field expr-capture)) symbol))
                               (let ((marker (make-marker)))
                                 (set-marker marker (point))
                                 (if to-same-pkg-p
@@ -411,8 +411,8 @@ the same package."
         (delete-region start end))
       (let* ((new-pkg-id (go-beast--package-id-for-file file-name))
              (new-pkg-directory (file-name-directory file-name))
-             (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/")))
-             (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) new-pkg-path) "/")))
+             (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/*")))
+             (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) "/" new-pkg-path) "/")))
         (dolist (symbol to-move-symbols)
           (let ((symbol-references (go-beast-find-references symbol package-name pkg-path new-pkg-path)))
             (pcase-let ((`(,matches ,from-same-pkg-matches ,to-same-pkg-matches) symbol-references))
@@ -451,7 +451,6 @@ the same package."
 
 
 ;;; Commands:
-
 
 (defun go-beast-refactor-move (file-name)
   "Move the symbol to another package, updating references."

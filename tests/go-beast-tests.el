@@ -69,19 +69,33 @@
      `((function_declaration name: ((_) @name
                                     (:equal @name ,func-name)))))))
 
+(defun go-beast-test-file-has-import (file import)
+  (with-current-buffer (find-file-noselect (go-beast-test-file file))
+    (treesit-query-capture
+     (treesit-buffer-root-node)
+     `((import_spec
+        path:
+        ((interpreted_string_literal) @path
+         (:equal @path ,(format "\"%s\"" import))))))))
+
 (defun go-beast-test-file-has-call-expression (file pkg func)
-  "Return non-nil if FILE calls a function with package PKG named FUNC."
+      "Return non-nil if FILE calls a function with package PKG named FUNC."
   (with-current-buffer (find-file-noselect (go-beast-test-file file))
     (go-ts-mode) ;; TODO: remove these go-ts-mode calls
     (treesit-query-capture
      (treesit-buffer-root-node)
-     `((call_expression
-        function:
-        (selector_expression
-         operand: ((_) @pkg
-                   (:equal @pkg ,pkg))
-         field: ((_) @func
-                 (:equal @func ,func))))))))
+     (if (not pkg)
+         `((call_expression
+            function:
+            ((_) @func
+             (:equal @func ,func))))
+       `((call_expression
+          function:
+          (selector_expression
+           operand: ((_) @pkg
+                     (:equal @pkg ,pkg))
+           field: ((_) @func
+                   (:equal @func ,func)))))))))
 
 (defun go-beast-test-file-has-type (file func-name)
   (with-current-buffer (find-file-noselect (go-beast-test-file file))
@@ -191,6 +205,80 @@ func AddTwoNumbers(a int, b int) int {
 ")))))))
   "Function in same package referring to moved function.")
 
+(defconst go-beast-test-fixture-4
+  '(:mod
+    ((:dir "pkg"
+           ((:dir "baz"
+                  ((:src "baz.go"
+                         "package baz
+
+import \"github.com/zkry/test-repo/pkg/bar\"
+
+func BazSubtract(a int, b int) int {
+	return bar.AddTwoNumbers(a, b) - b
+}
+")))
+            (:dir "bar"
+                  ((:src "bar.go"
+                         "package bar
+
+type Number struct {
+	A int
+	B int
+}
+
+func AddTwoNumbers(a int, b int) int {
+	return 10
+}
+"))))))))
+
+(defconst go-beast-test-fixture-5
+  '(:mod
+    ((:dir "pkg"
+           ((:dir "baz"
+                  ((:src "baz.go"
+                         "package baz
+")))
+            (:dir "bar"
+                  ((:src "bar.go"
+                         "package bar
+
+func AddFourNumbers(a int, b int, c int, d int) int {
+	return AddTwoNumbers(a, b) + AddTwoNumbers(b, d)
+}
+
+func AddTwoNumbers(a int, b int) int {
+	return 10
+}
+"))))))))
+
+(defconst go-beast-test-fixture-6
+  '(:mod
+    ((:dir "pkg"
+           ((:dir "baz"
+                  ((:src "baz.go"
+                         "package baz
+")))
+            (:dir "foo"
+                  ((:src "foo.go"
+                         "package foo
+
+import \"github.com/zkry/test-repo/pkg/bar\"
+
+func AddFourNumbers(a, b, c, d int) int {
+	return bar.AddTwoNumbers(a, b) + bar.AddTwoNumbers(c, d)
+}
+")))
+            (:dir "bar"
+                  ((:src "bar.go"
+                         "package bar
+
+
+func AddTwoNumbers(a int, b int) int {
+	return 10
+}
+"))))))))
+
 
 ;;; Test Definitions
 
@@ -223,10 +311,21 @@ func AddTwoNumbers(a int, b int) int {
     (should (go-beast-test-file-has-call-expression "pkg/bar/new-bar.go" "baz" "AddTwoNumbers"))
     (should (not (go-beast-test-file-has-function "pkg/bar/bar.go" "AddTwoNumbers"))))
   ;; Test moving a function to a package where it was already being used
+  (go-beast-with-project-setup go-beast-test-fixture-4 "pkg/bar/bar.go"
+    (go-beast--move-items (go-beast-test-file "pkg/baz/baz.go") (go-beast-test-top-level-node '("AddTwoNumbers")))
+    (should (go-beast-test-file-has-function "pkg/baz/baz.go" "AddTwoNumbers"))
+    (should (go-beast-test-file-has-call-expression "pkg/baz/baz.go" nil "AddTwoNumbers")))
   ;; Test moving a function while its being used in the same package
-  )
-
-go-beast-last-scaffold-id
+  (go-beast-with-project-setup go-beast-test-fixture-5 "pkg/bar/bar.go"
+    (go-beast--move-items (go-beast-test-file "pkg/baz/baz.go") (go-beast-test-top-level-node '("AddTwoNumbers")))
+    (should (go-beast-test-file-has-function "pkg/baz/baz.go" "AddTwoNumbers"))
+    (should (go-beast-test-file-has-import "pkg/bar/bar.go" "github.com/zkry/test-repo/pkg/baz"))
+    (should (go-beast-test-file-has-call-expression "pkg/bar/bar.go" "baz" "AddTwoNumbers")))
+  (go-beast-with-project-setup go-beast-test-fixture-6 "pkg/bar/bar.go"
+    (go-beast--move-items (go-beast-test-file "pkg/baz/baz.go") (go-beast-test-top-level-node '("AddTwoNumbers")))
+    (should (go-beast-test-file-has-function "pkg/baz/baz.go" "AddTwoNumbers"))
+    (should (go-beast-test-file-has-import "pkg/foo/foo.go" "github.com/zkry/test-repo/pkg/baz"))
+    (should (go-beast-test-file-has-call-expression "pkg/foo/foo.go" "baz" "AddTwoNumbers"))))
 
 (provide 'go-scaffold)
 
