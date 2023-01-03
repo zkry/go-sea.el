@@ -251,79 +251,90 @@
 (defun go-beast--mod-pkg-root ()
   (string-trim-right (shell-command-to-string "go list -m -f '{{ .Path }} '")))
 
-(defun go-beast-find-references (symbol package new-directory)
+;; if from-path = new-path: no references
+;; if reference in from-path: add package
+;; if reference in new-path: remove package
+;; else: remove and add
+
+(defun go-beast-find-references (symbol package from-path new-path)
   "Find all references to SYMBOL of go-mod PACKAGE.
 The result is a list of matches in other packages and matches in
 the same package."
-  (let* ((original-directory default-directory)
-         (default-directory (go-beast--mod-root))
-         (files (string-lines (string-trim-right (shell-command-to-string (concat "ag '" symbol "' -l -w")))))
-         (matches '())
-         (same-pkg-matches '()))
-    (dolist (file files)
-      (let ((path (concat default-directory "/" file)) ;; TODO: more generic join (windows)
-            (same-pkg-p (equal (file-name-directory file) new-directory)))
-        (with-current-buffer (find-file-noselect file)
-          (save-excursion
-            (goto-char (point-min))
-            (go-ts-mode)
-            (if same-pkg-p
-                ;; TODO: can be in the same directory but be a different testing package.
-                (while (search-forward symbol nil t)
-                  (goto-char (match-beginning 0))
-                  (let ((at-node (treesit-node-at (point))))
-                    (cond
-                     ((and (or (equal (treesit-node-type at-node) "type_identifier")
-                               (equal (treesit-node-type at-node) "identifier"))
-                           (equal (treesit-node-text at-node) symbol))
-                      ;; match!
-                      (let ((marker (make-marker)))
-                        (set-marker marker (point))
-                        (push (cons file marker) same-pkg-matches)))))
-                  (goto-char (match-end 0)))
-              (let* ((pkg-capture
-                      (treesit-query-capture
-                       (treesit-buffer-root-node)
-                       `((import_spec name: (_) :? @name
-                                      path: ((interpreted_string_literal) @path
-                                             (:equal @path ,(format "\"%s\"" package)))))))
-                     (path-ok (alist-get 'path pkg-capture))
-                     (pkg-name (or (alist-get 'name pkg-capture) (file-name-base package)))  ;; TODO: not correct
-                     (identifier (concat pkg-name "." symbol)))
-                (while (search-forward identifier nil t)
-                  (goto-char (match-beginning 0))
-                  (save-match-data
-                    (let ((parent-node (treesit-node-parent (treesit-node-at (point)))))
+  (if (equal from-path new-path)
+      '(nil nil nil)
+    (let* ((original-directory default-directory)
+           (default-directory (go-beast--mod-root))
+           (files (string-lines (string-trim-right (shell-command-to-string (concat "ag '" symbol "' -l -w")))))
+           (matches '())
+           (same-to-pkg-matches '())
+           (same-from-pkg-matches))
+      (dolist (file files)
+        (let ((path (concat default-directory "/" file)) ;; TODO: more generic join (windows)
+              (from-same-pkg-p (equal (file-name-directory file) from-path))
+              (to-same-pkg-p (equal (file-name-directory file) new-path)))
+          (with-current-buffer (find-file-noselect file)
+            (save-excursion
+              (goto-char (point-min))
+              (go-ts-mode)
+              (if from-same-pkg-p
+                  ;; TODO: can be in the same directory but be a different testing package.
+                  (while (search-forward symbol nil t)
+                    (goto-char (match-beginning 0))
+                    (let ((at-node (treesit-node-at (point))))
                       (cond
-                       ((equal (treesit-node-type parent-node) "selector_expression")
-                        (let ((expr-capture
-                               (treesit-query-capture
-                                parent-node
-                                '((selector_expression operand: (_) @operand
-                                                       field: (_) @field)))))
-                          (when (and (equal (alist-get 'operand expr-capture) pkg-name)
-                                     (equal (alist-get 'field expr-capture) symbol))
-                            (let ((marker (make-marker)))
-                              (set-marker marker (point))
-                              (push (cons file marker) matches))
-                            ;; match!
-                            )))
-                       ((equal (treesit-node-type parent-node) "qualified_type")
-                        (let ((expr-capture
-                               (treesit-query-capture
-                                parent-node
-                                '((qualified_type package: (_) @package
-                                                  name: (_) @name)))))
-                          (when (and (equal (treesit-node-text (alist-get 'package expr-capture)) pkg-name)
-                                     (equal (treesit-node-text (alist-get 'name expr-capture)) symbol))
-                            (let ((marker (make-marker)))
-                              (set-marker marker (point))
-                              (push (cons file marker) matches))
-                            ;; match!
-                            )))
-                       (t nil))))
-                  (goto-char (match-end 0)))))))))
-    (list matches same-pkg-matches)))
+                       ((and (or (equal (treesit-node-type at-node) "type_identifier")
+                                 (equal (treesit-node-type at-node) "identifier"))
+                             (equal (treesit-node-text at-node) symbol))
+                        ;; match!
+                        (let ((marker (make-marker)))
+                          (set-marker marker (point))
+                          (push (cons file marker) same-from-pkg-matches)))))
+                    (goto-char (match-end 0)))
+                (let* ((pkg-capture
+                        (treesit-query-capture
+                         (treesit-buffer-root-node)
+                         `((import_spec name: (_) :? @name
+                                        path: ((interpreted_string_literal) @path
+                                               (:equal @path ,(format "\"%s\"" package)))))))
+                       (path-ok (alist-get 'path pkg-capture))
+                       (pkg-name (or (alist-get 'name pkg-capture) (file-name-base package)))  ;; TODO: not correct
+                       (identifier (concat pkg-name "." symbol)))
+                  (while (search-forward identifier nil t)
+                    (goto-char (match-beginning 0))
+                    (save-match-data
+                      (let ((parent-node (treesit-node-parent (treesit-node-at (point)))))
+                        (cond
+                         ((equal (treesit-node-type parent-node) "selector_expression")
+                          (let ((expr-capture
+                                 (treesit-query-capture
+                                  parent-node
+                                  '((selector_expression operand: (_) @operand
+                                                         field: (_) @field)))))
+                            (when (and (equal (alist-get 'operand expr-capture) pkg-name)
+                                       (equal (alist-get 'field expr-capture) symbol))
+                              (let ((marker (make-marker)))
+                                (set-marker marker (point))
+                                (if to-same-pkg-p
+                                    (push (cons file marker) same-to-pkg-matches)
+                                  (push (cons file marker) matches)))
+                              ;; match!
+                              )))
+                         ((equal (treesit-node-type parent-node) "qualified_type")
+                          (let ((expr-capture
+                                 (treesit-query-capture
+                                  parent-node
+                                  '((qualified_type package: (_) @package
+                                                    name: (_) @name)))))
+                            (when (and (equal (treesit-node-text (alist-get 'package expr-capture)) pkg-name)
+                                       (equal (treesit-node-text (alist-get 'name expr-capture)) symbol))
+                              (let ((marker (make-marker)))
+                                (set-marker marker (point))
+                                (if to-same-pkg-p
+                                    (push (cons file marker) same-to-pkg-matches)
+                                  (push (cons file marker) matches))))))
+                         (t nil))))
+                    (goto-char (match-end 0)))))))))
+      (list matches same-from-pkg-matches same-to-pkg-matches))))
 
 (defun go-beast--get-symbol-to-move ()
   "Returns the symbol at point to be moved."
@@ -361,6 +372,10 @@ the same package."
       (when id-node
         (treesit-node-text id-node)))))
 
+(defun go-beast--current-package-id ()
+  "Return the package-id of the current file."
+  )
+
 (defun go-beast--select-toplevel-form ()
   (let* ((top-level-nodes (go-beast-top-level-forms))
          (names (seq-map #'treesit-node-text top-level-nodes))
@@ -371,18 +386,12 @@ the same package."
        (member (treesit-node-text node) selection))
      top-level-nodes)))
 
-
-;;; Commands:
-
-
-(defun go-beast-refactor-move (file-name)
+(defun go-beast--move-items (file-name to-move-items)
   "Move the symbol to another package, updating references."
-  (interactive "F")
-  (let* ((to-move-items (go-beast--select-toplevel-form))
-         (to-move-symbols (seq-map #'treesit-node-text to-move-items))
+  (let* ((to-move-symbols (seq-map #'treesit-node-text to-move-items))
          (mod-root (go-beast--mod-root))
-         (pkg-path (string-trim-left default-directory (regexp-quote mod-root)))
-         (package-name (string-trim-right (concat (go-beast--mod-pkg-root) pkg-path) "/")))
+         (pkg-path (string-trim-left default-directory (concat (regexp-quote mod-root) "/*")))
+         (package-name (string-trim-right (file-name-concat (go-beast--mod-pkg-root) pkg-path) "/")))
     (unless (not (equal mod-root ""))
       (user-error "Unable to find go-mod."))
     (unless to-move-items
@@ -397,16 +406,16 @@ the same package."
           (set-marker start-marker (treesit-node-start top-level-node))
           (set-marker end-marker (treesit-node-end top-level-node))
           (push (cons start-marker end-marker) deletions)
-          (push (treesit-node-text move-item-node) insertions)))
+          (push (treesit-node-text top-level-node) insertions)))
       (pcase-dolist (`(,start . ,end) deletions)
         (delete-region start end))
       (let* ((new-pkg-id (go-beast--package-id-for-file file-name))
              (new-pkg-directory (file-name-directory file-name))
-             (new-pkg-path (string-trim-left new-pkg-directory (regexp-quote mod-root)))
+             (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/")))
              (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) new-pkg-path) "/")))
         (dolist (symbol to-move-symbols)
-          (let ((symbol-references (go-beast-find-references symbol package-name new-pkg-directory)))
-            (pcase-let ((`(,matches ,same-pkg-matches) symbol-references))
+          (let ((symbol-references (go-beast-find-references symbol package-name pkg-path new-pkg-path)))
+            (pcase-let ((`(,matches ,from-same-pkg-matches ,to-same-pkg-matches) symbol-references))
               (dolist (match matches)
                 (pcase-let ((`(,file . ,pt) match))
                   (find-file (concat mod-root "/" file))
@@ -417,7 +426,17 @@ the same package."
                     (delete-region start (1+ end))
                     (insert new-pkg-id "."))
                   (go-beast--ensure-import new-pkg-name)))
-              (dolist (match same-pkg-matches)
+              ;; remove package since the symbol is moving to here
+              (dolist (match to-same-pkg-matches)
+                (pcase-let ((`(,file . ,pt) match))
+                  (find-file (concat mod-root "/" file))
+                  (goto-char pt)
+                  (let* ((at-node (treesit-node-at (point)))
+                         (start (treesit-node-start at-node))
+                         (end (treesit-node-end at-node)))
+                    (delete-region start (1+ end)))))
+              ;; add package since before there was no symbol
+              (dolist (match from-same-pkg-matches)
                 (pcase-let ((`(,file . ,pt) match))
                   (find-file (concat mod-root "/" file))
                   (goto-char pt)
@@ -425,13 +444,20 @@ the same package."
                   (go-beast--ensure-import new-pkg-name))))))
         (find-file file-name)
         (go-ts-mode)
-        (let* ((new-pkg-id (go-beast--current-package-id))
-               (new-pkg-path (string-trim-left default-directory (regexp-quote mod-root)))
-               (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) new-pkg-path) "/")))
-          (goto-char (point-max))
-          (insert "\n\n")
-          (dolist (insertion insertions)
-            (insert insertion "\n\n")))))))
+        (goto-char (point-max))
+        (insert "\n\n")
+        (dolist (insertion insertions)
+          (insert insertion "\n\n"))))))
+
+
+;;; Commands:
+
+
+(defun go-beast-refactor-move (file-name)
+  "Move the symbol to another package, updating references."
+  (interactive "F")
+  (let* ((to-move-items (go-beast--select-toplevel-form)))
+    (go-beast--move-items file-name to-move-items)))
 
 (defun go-beast-toggle-var-declaration ()
   "Toggle the type of variable declaration at point."
