@@ -32,6 +32,19 @@
 
 (require 'treesit)
 
+(defgroup go-beast nil
+  "Go advanced editing capabilities"
+  :prefix "go-beast-"
+  :group 'applications)
+
+(defcustom go-beast-symbol-search-pattern
+  "ag '%s' -l -w"
+  "Command-line program to search entire project for a symbol.
+This command should return only the file-names of the results
+separated by new-lines."
+  :group 'go-beast
+  :type 'string)
+
 (defun go-beast--parent-function (node)
   "Return the parent of node that is of type `function_declaration'."
   (treesit-parent-until
@@ -245,16 +258,54 @@
 
 ;;; Move file helpers
 
+(defvar go-beast-refactor-context nil
+  "Intermediary context for performing project-wide refactoring.")
+
+(defun go-beast-flush-refactor-context ()
+  "Write out the pending changes to files."
+  (maphash
+   (lambda (file-name buffer)
+     (with-temp-file file-name
+       (insert
+        (with-current-buffer buffer
+          (buffer-string))))
+     (kill-buffer buffer))
+   go-beast-refactor-context))
+
+(defmacro go-beast-with-refactor-context (&rest body)
+  (declare (debug t))
+  `(let ((go-beast-refactor-context (make-hash-table :test 'equal)))
+     ,@body
+     (go-beast-flush-refactor-context)))
+
+(defun go-beast-get-refactor-buffer-create (file-name)
+  (unless go-beast-refactor-context
+    (error "no refactoring context"))
+  (let ((buf (gethash file-name go-beast-refactor-context)))
+    (if buf
+        buf
+      (let ((new-buf (generate-new-buffer (file-name-nondirectory file-name) )))
+        (with-current-buffer new-buf
+          (insert-file-contents file-name)
+          (treesit-parser-create 'go)
+          (goto-char (point-min)))
+        (puthash file-name new-buf go-beast-refactor-context)
+        new-buf))))
+
+(defmacro go-beast-with-go-ts-file (file-name &rest body)
+  "BODY is executed in a buffer with contents of FILE-NAME.
+Tree-sitter is enabled for buffer."
+  (declare (indent 1) (debug t))
+  `(progn
+     (let ((buf (go-beast-get-refactor-buffer-create ,file-name)))
+       (with-current-buffer buf
+         ,@body))))
+
 (defun go-beast--mod-root ()
   (string-trim-right (shell-command-to-string "go list -m -f '{{.Dir}}'")))
 
 (defun go-beast--mod-pkg-root ()
   (string-trim-right (shell-command-to-string "go list -m -f '{{ .Path }} '")))
-
-;; if from-path = new-path: no references
-;; if reference in from-path: add package
-;; if reference in new-path: remove package
-;; else: remove and add
 
 (defun go-beast-find-references (symbol package from-path new-path)
   "Find all references to SYMBOL of go-mod PACKAGE.
@@ -264,7 +315,9 @@ the same package."
       '(nil nil nil)
     (let* ((original-directory default-directory)
            (default-directory (go-beast--mod-root))
-           (files (string-lines (string-trim-right (shell-command-to-string (concat "ag '" symbol "' -l -w")))))
+           (files (seq-remove
+                   #'string-blank-p
+                   (string-lines (string-trim-right (shell-command-to-string (format go-beast-symbol-search-pattern symbol))))))
            (matches '())
            (same-to-pkg-matches '())
            (same-from-pkg-matches))
@@ -272,7 +325,7 @@ the same package."
         (let ((path (concat default-directory "/" file)) ;; TODO: more generic join (windows)
               (from-same-pkg-p (equal (file-name-directory file) from-path))
               (to-same-pkg-p (equal (file-name-directory file) new-path)))
-          (with-current-buffer (find-file-noselect file)
+          (go-beast-with-go-ts-file (file-name-concat default-directory file)
             (save-excursion
               (goto-char (point-min))
               (go-ts-mode)
@@ -362,7 +415,7 @@ the same package."
 
 (defun go-beast--package-id-for-file (file-name)
   "Return the package id for the current file."
-  (with-current-buffer (find-file-noselect file-name)
+  (go-beast-with-go-ts-file file-name
     (go-ts-mode)
     (let* ((root-node (treesit-buffer-root-node))
            (id-node (alist-get 'id
@@ -371,10 +424,6 @@ the same package."
                                 '((package_clause (package_identifier) @id))))))
       (when id-node
         (treesit-node-text id-node)))))
-
-(defun go-beast--current-package-id ()
-  "Return the package-id of the current file."
-  )
 
 (defun go-beast--select-toplevel-form ()
   (let* ((top-level-nodes (go-beast-top-level-forms))
@@ -388,66 +437,68 @@ the same package."
 
 (defun go-beast--move-items (file-name to-move-items)
   "Move the symbol to another package, updating references."
-  (let* ((to-move-symbols (seq-map #'treesit-node-text to-move-items))
-         (mod-root (go-beast--mod-root))
-         (pkg-path (string-trim-left default-directory (concat (regexp-quote mod-root) "/*")))
-         (package-name (string-trim-right (file-name-concat (go-beast--mod-pkg-root) pkg-path) "/")))
-    (unless (not (equal mod-root ""))
-      (user-error "Unable to find go-mod."))
-    (unless to-move-items
-      (user-error "Nothing movable at current point"))
-    (let ((deletions '())
-          (insertions '()))
-      (dolist (move-item-node to-move-items)
-        (let* ((top-level-node (go-beast--move-symbol-top-node move-item-node))
-               (top-level-text (treesit-node-text top-level-node))
-               (start-marker (make-marker))
-               (end-marker (make-marker)))
-          (set-marker start-marker (treesit-node-start top-level-node))
-          (set-marker end-marker (treesit-node-end top-level-node))
-          (push (cons start-marker end-marker) deletions)
-          (push (treesit-node-text top-level-node) insertions)))
-      (pcase-dolist (`(,start . ,end) deletions)
-        (delete-region start end))
-      (let* ((new-pkg-id (go-beast--package-id-for-file file-name))
-             (new-pkg-directory (file-name-directory file-name))
-             (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/*")))
-             (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) "/" new-pkg-path) "/")))
-        (dolist (symbol to-move-symbols)
-          (let ((symbol-references (go-beast-find-references symbol package-name pkg-path new-pkg-path)))
-            (pcase-let ((`(,matches ,from-same-pkg-matches ,to-same-pkg-matches) symbol-references))
-              (dolist (match matches)
-                (pcase-let ((`(,file . ,pt) match))
-                  (find-file (concat mod-root "/" file))
-                  (goto-char pt)
-                  (let* ((at-node (treesit-node-at (point)))
-                         (start (treesit-node-start at-node))
-                         (end (treesit-node-end at-node)))
-                    (delete-region start (1+ end))
-                    (insert new-pkg-id "."))
-                  (go-beast--ensure-import new-pkg-name)))
-              ;; remove package since the symbol is moving to here
-              (dolist (match to-same-pkg-matches)
-                (pcase-let ((`(,file . ,pt) match))
-                  (find-file (concat mod-root "/" file))
-                  (goto-char pt)
-                  (let* ((at-node (treesit-node-at (point)))
-                         (start (treesit-node-start at-node))
-                         (end (treesit-node-end at-node)))
-                    (delete-region start (1+ end)))))
-              ;; add package since before there was no symbol
-              (dolist (match from-same-pkg-matches)
-                (pcase-let ((`(,file . ,pt) match))
-                  (find-file (concat mod-root "/" file))
-                  (goto-char pt)
-                  (insert new-pkg-id ".")
-                  (go-beast--ensure-import new-pkg-name))))))
-        (find-file file-name)
-        (go-ts-mode)
-        (goto-char (point-max))
-        (insert "\n\n")
-        (dolist (insertion insertions)
-          (insert insertion "\n\n"))))))
+  (go-beast-with-refactor-context
+   (let* ((to-move-symbols (seq-map #'treesit-node-text to-move-items))
+          (mod-root (go-beast--mod-root))
+          (pkg-path (string-trim-left default-directory (concat (regexp-quote mod-root) "/*")))
+          (package-name (string-trim-right (file-name-concat (go-beast--mod-pkg-root) pkg-path) "/")))
+     (unless (not (equal mod-root ""))
+       (user-error "Unable to find go-mod."))
+     (unless to-move-items
+       (user-error "Nothing movable at current point"))
+     (let ((deletions '())
+           (insertions '()))
+       (dolist (move-item-node to-move-items)
+         (let* ((top-level-node (go-beast--move-symbol-top-node move-item-node))
+                (top-level-text (treesit-node-text top-level-node))
+                (start-marker (make-marker))
+                (end-marker (make-marker)))
+           (set-marker start-marker (treesit-node-start top-level-node))
+           (set-marker end-marker (treesit-node-end top-level-node))
+           (push (cons start-marker end-marker) deletions)
+           (push (treesit-node-text top-level-node) insertions)))
+       (pcase-dolist (`(,start . ,end) deletions)
+         (delete-region start end))
+       (save-buffer)
+       (let* ((new-pkg-id (go-beast--package-id-for-file file-name))
+              (new-pkg-directory (file-name-directory file-name))
+              (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/*")))
+              (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) "/" new-pkg-path) "/")))
+         (dolist (symbol to-move-symbols)
+           (let ((symbol-references (go-beast-find-references symbol package-name pkg-path new-pkg-path)))
+             (pcase-let ((`(,matches ,from-same-pkg-matches ,to-same-pkg-matches) symbol-references))
+               (dolist (match matches)
+                 (pcase-let ((`(,file . ,pt) match))
+                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                     (goto-char pt)
+                     (let* ((at-node (treesit-node-at (point)))
+                            (start (treesit-node-start at-node))
+                            (end (treesit-node-end at-node)))
+                       (delete-region start (1+ end))
+                       (insert new-pkg-id "."))
+                     (go-beast--ensure-import new-pkg-name))))
+               ;; remove package since the symbol is moving to here
+               (dolist (match to-same-pkg-matches)
+                 (pcase-let ((`(,file . ,pt) match))
+                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                     (goto-char pt)
+                     (let* ((at-node (treesit-node-at (point)))
+                            (start (treesit-node-start at-node))
+                            (end (treesit-node-end at-node)))
+                       (delete-region start (1+ end))))))
+               ;; add package since before there was no symbol
+               (dolist (match from-same-pkg-matches)
+                 (pcase-let ((`(,file . ,pt) match))
+                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                     (goto-char pt)
+                     (insert new-pkg-id ".")
+                     (go-beast--ensure-import new-pkg-name)))))))
+         (go-beast-with-go-ts-file file-name
+           (go-ts-mode)
+           (goto-char (point-max))
+           (insert "\n\n")
+           (dolist (insertion insertions)
+             (insert insertion "\n\n"))))))))
 
 
 ;;; Commands:

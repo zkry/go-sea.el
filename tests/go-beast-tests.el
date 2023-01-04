@@ -50,7 +50,7 @@
 (defun go-scaffold-generate (defn)
   (let* ((temp-dir (temporary-file-directory))
          (proj-name (format "go%d" (random 10000)))
-         (proj-dir (file-name-concat temp-dir proj-name "/")))
+         (proj-dir (file-name-concat temp-dir proj-name)))
     (setq go-beast-last-scaffold-id proj-name)
     (f-mkdir proj-dir)
     (go-scaffold--generate-rec defn proj-dir)
@@ -62,15 +62,18 @@
   (file-name-concat go-beast-test-project-root file))
 
 (defun go-beast-test-file-has-function (file func-name)
-  (with-current-buffer (find-file-noselect (go-beast-test-file file))
-    (go-ts-mode)
+  (with-temp-buffer
+    (insert-file-contents (go-beast-test-file file))
+    (treesit-parser-create 'go)
     (treesit-query-capture
      (treesit-buffer-root-node)
      `((function_declaration name: ((_) @name
                                     (:equal @name ,func-name)))))))
 
 (defun go-beast-test-file-has-import (file import)
-  (with-current-buffer (find-file-noselect (go-beast-test-file file))
+  (with-temp-buffer
+    (insert-file-contents (go-beast-test-file file))
+    (treesit-parser-create 'go)
     (treesit-query-capture
      (treesit-buffer-root-node)
      `((import_spec
@@ -79,9 +82,10 @@
          (:equal @path ,(format "\"%s\"" import))))))))
 
 (defun go-beast-test-file-has-call-expression (file pkg func)
-      "Return non-nil if FILE calls a function with package PKG named FUNC."
-  (with-current-buffer (find-file-noselect (go-beast-test-file file))
-    (go-ts-mode) ;; TODO: remove these go-ts-mode calls
+  "Return non-nil if FILE calls a function with package PKG named FUNC."
+  (with-temp-buffer
+    (insert-file-contents (go-beast-test-file file))
+    (treesit-parser-create 'go)
     (treesit-query-capture
      (treesit-buffer-root-node)
      (if (not pkg)
@@ -98,8 +102,9 @@
                    (:equal @func ,func)))))))))
 
 (defun go-beast-test-file-has-type (file func-name)
-  (with-current-buffer (find-file-noselect (go-beast-test-file file))
-    (go-ts-mode)
+  (with-temp-buffer
+    (insert-file-contents (go-beast-test-file file))
+    (treesit-parser-create 'go)
     (treesit-query-capture
      (treesit-buffer-root-node)
      `((type_declaration
@@ -299,7 +304,7 @@ func AddTwoNumbers(a int, b int) int {
   ;; Move to different package
   (go-beast-with-project-setup go-beast-test-fixture-2 "pkg/bar/bar.go"
     (go-beast--move-items (go-beast-test-file "pkg/baz/baz.go") (go-beast-test-top-level-node '("AddTwoNumbers"
-                                                                                                    "Number")))
+                                                                                                "Number")))
     (should (go-beast-test-file-has-function "pkg/baz/baz.go" "AddTwoNumbers"))
     (should (go-beast-test-file-has-type "pkg/baz/baz.go" "Number"))
     (should (not (go-beast-test-file-has-function "pkg/bar/bar.go" "AddTwoNumbers")))
@@ -325,7 +330,10 @@ func AddTwoNumbers(a int, b int) int {
     (go-beast--move-items (go-beast-test-file "pkg/baz/baz.go") (go-beast-test-top-level-node '("AddTwoNumbers")))
     (should (go-beast-test-file-has-function "pkg/baz/baz.go" "AddTwoNumbers"))
     (should (go-beast-test-file-has-import "pkg/foo/foo.go" "github.com/zkry/test-repo/pkg/baz"))
-    (should (go-beast-test-file-has-call-expression "pkg/foo/foo.go" "baz" "AddTwoNumbers"))))
+    (should (go-beast-test-file-has-call-expression "pkg/foo/foo.go" "baz" "AddTwoNumbers")))
+  )
+
+go-beast-last-scaffold-id
 
 (provide 'go-scaffold)
 
