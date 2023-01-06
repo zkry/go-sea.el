@@ -70,6 +70,20 @@
      `((function_declaration name: ((_) @name
                                     (:equal @name ,func-name)))))))
 
+(defun go-beast-test-file-has-comment-with-text (file text)
+  (with-temp-buffer
+    (insert-file-contents (go-beast-test-file file))
+    (treesit-parser-create 'go)
+    (let ((captures (treesit-query-capture
+                     (treesit-buffer-root-node)
+                     '((comment) @comments))))
+      (seq-find
+       (lambda (capture)
+         (let* ((node (cdr capture))
+                (node-text (treesit-node-text node)))
+           (string-match (regexp-quote text) node-text)))
+       captures))))
+
 (defun go-beast-test-file-has-import (file import)
   (with-temp-buffer
     (insert-file-contents (go-beast-test-file file))
@@ -143,6 +157,7 @@ type Number struct {
 	B int
 }
 
+// AddTwoNumbers is a function that returns ten.
 func AddTwoNumbers(a int, b int) int {
 	return 10
 }
@@ -292,6 +307,7 @@ func AddTwoNumbers(a int, b int) int {
   (go-beast-with-project-setup go-beast-test-fixture-1 "pkg/bar/bar.go"
     (go-beast--move-items (go-beast-test-file "pkg/bar/new-bar.go") (go-beast-test-top-level-node '("AddTwoNumbers")))
     (should (go-beast-test-file-has-function "pkg/bar/new-bar.go" "AddTwoNumbers"))
+    (should (go-beast-test-file-has-comment-with-text "pkg/bar/new-bar.go" "AddTwoNumbers"))
     (should (not (go-beast-test-file-has-function "pkg/bar/bar.go" "AddTwoNumbers"))))
   ;; Move two things to a different file in the same package
   (go-beast-with-project-setup go-beast-test-fixture-1 "pkg/bar/bar.go"

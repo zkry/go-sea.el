@@ -57,9 +57,21 @@ separated by new-lines."
          (equal (treesit-node-type node)
                 "func_literal")))))
 
+(defun go-beast--type-to-string (type)
+  "Return string of data representaiton of TYPE."
+  (pcase type
+    (`(slice ,sub-type)
+     (concat "[]" (go-beast--type-to-string sub-type)))
+    (`(map ,key-type ,val-type)
+     (concat "map[" (go-beast--type-to-string key-type) "]"
+             (go-beast--type-to-string val-type)))
+    (`(pointer-type ,sub-type)
+     (concat "*" (go-beast--type-to-string sub-type)))
+    (_ type)))
+
 ;; Lisp object representation of Go types:
 ;;   Primitive: "int", "uint", "string"
-;;   Slice: []int -> (slice* "int")
+;;   Slice: []int -> (slice "int")
 ;;   Struct: Buffer -> "Buffer"
 ;;   Map:   map[int]string -> (map "int" "string")
 ;;   Multiple: (int, int , []int) -> (parameters "int" "int" (slice "int"))
@@ -81,7 +93,7 @@ separated by new-lines."
             (alist-get 'subtype
                        (treesit-query-capture
                         result-node
-                        '((pointer_type (_) @subtype :anchor))))))
+                        '((pointer-type (_) @subtype :anchor))))))
        (list 'pointer
              (go-beast--resolve-result subtype-node))))
     ("map_type"
@@ -101,6 +113,35 @@ separated by new-lines."
                        '((parameter_declaration type: (_) @type))))))
        (append '(parameters) (seq-map #'go-beast--resolve-result types))))
     (_ 'unknown*)))
+
+(defun go-beast--resolve-params (parameters-node)
+  "Return lisp data representing the parameter types of PARAMETERS-NODE.
+Results are in the form of (PARAM-NAMES PARAM-TYPES).  The names
+are a list of strings and the types are in the same form as the
+return type data."
+  (let* ((parameters '())
+         (types '())
+         (declarations
+          (treesit-query-capture
+           parameters-node
+           '((parameter_declaration) @declr))))
+    (pcase-dolist (`(_ . ,declr) declarations)
+      (let* ((type
+              (alist-get 'type
+                         (treesit-query-capture
+                          declr
+                          '((parameter_declaration
+                             (_) @type :anchor)))))
+             (resolved-type (go-beast--resolve-result type))
+             (identifiers
+              (seq-map #'treesit-node-text
+               (seq-map #'cdr
+                        (treesit-query-capture
+                         declr
+                         '((identifier) @id))))))
+        (setq types (append types (make-list (length identifiers) resolved-type)))
+        (setq parameters (append parameters identifiers))))
+    (list parameters types)))
 
 (defconst go-beast--numeric-types
   '("uint8" "uint16" "uint32" "uint64" "int8" "int16" "int32" "int64" "float32" "float64"
@@ -328,7 +369,7 @@ the same package."
           (go-beast-with-go-ts-file (file-name-concat default-directory file)
             (save-excursion
               (goto-char (point-min))
-              (go-ts-mode)
+              (treesit-parser-create 'go)
               (if from-same-pkg-p
                   ;; TODO: can be in the same directory but be a different testing package.
                   (while (search-forward symbol nil t)
@@ -413,17 +454,32 @@ the same package."
      node
      "type_declaration"))))
 
+(defun go-beast--commenting-node (node)
+  "Given a node, return its comment if it exists."
+  (save-excursion
+    (goto-char (treesit-node-start node))
+    (forward-line -1)
+    (let ((at-node (treesit-node-at (point))))
+      (when (equal (treesit-node-type at-node) "comment")
+        at-node))))
+
+(defun go-beast--get-package-id ()
+  "Return the packge ID of the current file."
+  (let* ((root-node (treesit-buffer-root-node))
+         (id-node (alist-get 'id
+                             (treesit-query-capture
+                              root-node
+                              '((package_clause (package_identifier) @id))))))
+    (if id-node
+        (treesit-node-text id-node)
+      (let ((dir-parts (file-name-split (file-name-directory (buffer-file-name)))))
+        (nth (- (length dir-parts) 2) dir-parts)))))
+
 (defun go-beast--package-id-for-file (file-name)
   "Return the package id for the current file."
   (go-beast-with-go-ts-file file-name
     (go-ts-mode)
-    (let* ((root-node (treesit-buffer-root-node))
-           (id-node (alist-get 'id
-                               (treesit-query-capture
-                                root-node
-                                '((package_clause (package_identifier) @id))))))
-      (when id-node
-        (treesit-node-text id-node)))))
+    (go-baest--get-package-id)))
 
 (defun go-beast--select-toplevel-form ()
   (let* ((top-level-nodes (go-beast-top-level-forms))
@@ -450,13 +506,21 @@ the same package."
            (insertions '()))
        (dolist (move-item-node to-move-items)
          (let* ((top-level-node (go-beast--move-symbol-top-node move-item-node))
-                (top-level-text (treesit-node-text top-level-node))
+                (comment-node (go-beast--commenting-node top-level-node))
+                (top-level-text (if comment-node
+                                    (concat (treesit-node-text comment-node)
+                                            "\n"
+                                            (treesit-node-text top-level-node))
+                                  (treesit-node-text top-level-node)))
                 (start-marker (make-marker))
                 (end-marker (make-marker)))
+           (if comment-node
+               (set-marker start-marker (treesit-node-start comment-node))
+             (set-marker start-marker (treesit-node-start top-level-node)))
            (set-marker start-marker (treesit-node-start top-level-node))
            (set-marker end-marker (treesit-node-end top-level-node))
            (push (cons start-marker end-marker) deletions)
-           (push (treesit-node-text top-level-node) insertions)))
+           (push top-level-text insertions)))
        (pcase-dolist (`(,start . ,end) deletions)
          (delete-region start end))
        (save-buffer)
@@ -499,6 +563,125 @@ the same package."
            (insert "\n\n")
            (dolist (insertion insertions)
              (insert insertion "\n\n"))))))))
+
+
+;;; Implement interface helpers
+
+(defconst go-beast-standard-lib-interfaces-cache nil)
+
+(defun go-beast-go-env (var)
+  "Fetch the value of the go env value of VAR."
+  (let* ((data (json-parse-string (shell-command-to-string "go env -json"))))
+    (gethash var data)))
+
+(defun go-beast--standard-lib-interfaces ()
+  (let* ((src-dir (file-name-concat (go-beast-go-env "GOROOT") "src"))
+         (default-directory src-dir)
+         (interfaces (go-beast--list-project-interfaces))
+         (usable-interfaces
+          (seq-remove
+           (lambda (item)
+             (pcase-let ((`(,file . _) item))
+               (or 
+                (string-match-p "/testdata/" file)
+                (string-match-p "/vendor/" file)
+                (string-match-p "/internal/" file)
+                (string-match-p "/usr/local/" file)
+                (string-match-p "/cmd/" file)
+                (string-match-p "_test.go" file))))
+           interfaces)))
+    (setq go-beast-standard-lib-interfaces-cache usable-interfaces)
+    usable-interfaces))
+
+(defun go-beast--list-project-interfaces ()
+  "Return a list of all interface names."
+  (let* ((res '())
+         (mod-root (go-beast--mod-root))
+         (pkg-root (go-beast--mod-pkg-root))
+         (relative-directory (string-trim-left default-directory
+                                               (regexp-quote (concat mod-root "/")))))
+    ;; Private
+    (with-temp-buffer
+      (call-process "ag" nil (current-buffer) t
+                    "^type [a-z][a-zA-Z0-9_]*.* interface {$"
+                    "--depth" "1")
+      (save-excursion
+        (goto-char (point-min))
+        (while (not (eobp))
+          (when (looking-at-p "[a-zA-Z0-9_]")
+            (insert relative-directory))
+          (forward-line 1)))
+      (let ((default-directory mod-root))
+        (call-process "ag" nil (current-buffer) t
+                      "^type [A-Z][a-zA-Z0-9_]*.* interface {$"))
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let* ((line (buffer-substring (pos-bol) (pos-eol)))
+               (parts (string-split line ":"))
+               (file (file-name-concat pkg-root (nth 0 parts)))
+               (interface-line (nth 2 parts)))
+          (string-match "type \\([A-Z][a-zA-Z0-9_]*\\(?:\\[.*\\]\\)?\\) interface {" interface-line)
+          (let ((interface-symbol (match-string 1 interface-line)))
+            (when interface-symbol
+              (push (cons file interface-symbol) res))))
+        (forward-line 1))
+      res)))
+
+(defun go-beast-subtract-directory (full base)
+  (string-trim-left full (concat (regexp-quote base) "/*")))
+
+(defun go-beast--fetch-interface-def (file interface)
+  "Fetch the definition of INTERFACE located in FILE.
+Results are returned in the form:
+(NAME PARAMS RESULT)."
+  (let* ((mod-root (go-beast--mod-root)))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (treesit-parser-create 'go)
+      (let* ((capture
+              (treesit-query-capture
+               (treesit-buffer-root-node)
+               `((type_declaration
+                  (type_spec
+                   name: ((_) @name
+                          (:equal @name ,interface))
+                   type:
+                   (interface_type) @interface-type)))))
+             (interface-type-node (alist-get 'interface-type capture))
+             (method-specs (treesit-query-capture
+                            interface-type-node
+                            `((method_spec) @method-spec)))
+             (results '()))
+        (dolist (spec method-specs)
+          (let ((capture (treesit-query-capture
+                          (cdr spec)
+                          '((method_spec
+                             name: (_) @name
+                             parameters: (_) @parameters
+                             result: (_) :? @result)))))
+            (push (list (treesit-node-text (alist-get 'name capture))
+                        (treesit-node-text (alist-get 'parameters capture))
+                        (treesit-node-text (alist-get 'result capture)))
+                  results)))
+        results))))
+
+(defun go-beast--insert-interface-defs (reciever interfaces)
+  "Insert generated Go code of INTERFACES at point for RECIEVER.
+INTERFACES should be in the form as provided from the function
+`go-beast--fetch-interface-def'."
+  (let* ((reciever-name (treesit-node-text reciever))
+         (reciever-letter (downcase (substring reciever-name 0 1))))
+    (save-excursion
+      (insert "\n\n")
+      (pcase-dolist (`(,name ,params ,result) interfaces)
+        (insert (format "func (%s %s) %s%s %s {\n\tpanic(\"not implemented\")\n}\n\n"
+                        reciever-letter
+                        reciever-name
+                        name
+                        params
+                        result)))
+      (while (looking-at-p "\n")
+        (delete-char 1)))))
 
 
 ;;; Commands:
@@ -732,6 +915,304 @@ the same package."
       (dolist (marker (list cond-start-marker cond-end-marker consequence-start-marker
                             consequence-end-marker alternative-start-marker alternative-end-marker))
         (set-marker marker nil)))))
+
+(defun go-beast-add-else ()
+  "Add else clause."
+  (interactive)
+  (let* ((at-node (treesit-node-at (point)))
+         (if-node (treesit-parent-until
+                   at-node
+                   (lambda (node)
+                     (equal (treesit-node-type node)
+                            "if_statement")))))
+    (catch 'break
+      (while t
+        (let ((alt-node (treesit-node-child-by-field-name if-node "alternative")))
+          (when (or (not alt-node)
+                    (not (equal (treesit-node-type alt-node) "if_statement")))
+            (throw 'break nil))
+          (setq if-node alt-node))))
+    (let ((consequence-node (treesit-node-child-by-field-name if-node "consequence")))
+      (goto-char (treesit-node-end consequence-node))
+      (insert " else if ")
+      (let ((resume-pt (point))
+            (indent (buffer-substring-no-properties
+                     (pos-bol)
+                     (save-excursion
+                       (goto-char (pos-bol))
+                       (skip-chars-forward "\t")
+                       (point)))))
+        (insert " {\n\n" indent "}")
+        (goto-char resume-pt)))))
+
+(defun go-beast-implement-interface ()
+  "Add stub functions to implement an interface."
+  (interactive)
+  (let* ((at-declr (treesit-node-top-level
+                    (treesit-node-at (point))
+                    "type_declaration"))
+         (_ (unless at-declr
+              (user-error "No Type at point")))
+         (reciever-symbol
+          (alist-get 'name (treesit-query-capture
+                            at-declr
+                            '((type_spec name: (_) @name)))))
+         ;; TODO - prompt type if no type at point
+         (project-interfaces (go-beast--list-project-interfaces))
+         (mod-root (go-beast--mod-root))
+         (pkg-root (go-beast--mod-pkg-root))
+         (std-interfaces (go-beast--standard-lib-interfaces))
+         (go-env-root (go-beast-go-env "GOROOT"))
+         (completions+files (seq-map
+                             (lambda (item)
+                               (let ((file (car item))
+                                     (symbol (cdr item)))
+                                 (cons
+                                  (concat (string-trim-right (or (file-name-directory file) "") "/")
+                                          ":"
+                                          symbol)
+                                  (cond
+                                   ((string-prefix-p pkg-root file)
+                                    (file-name-concat mod-root (go-beast-subtract-directory file pkg-root)))
+                                   ((string-prefix-p "std/" file)
+                                    (file-name-concat go-env-root
+                                                      "src"
+                                                      (go-beast-subtract-directory file "std")))
+                                   (t file)))))
+                             (append project-interfaces std-interfaces)))
+         (selection (completing-read
+                     "Interface:"
+                     completions+files
+                     nil t))
+         (selected-file (alist-get selection completions+files nil nil 'equal))
+         (selected-symbol (nth 1 (string-split selection ":")))
+         (interfaces (go-beast--fetch-interface-def selected-file selected-symbol)))
+    (goto-char (treesit-node-end at-declr))
+    (go-beast--insert-interface-defs reciever-symbol interfaces)))
+
+(defun go-beast-demorgans-law ()
+  "Use demorgans law to toggle the operators && and ||. "
+  (interactive)
+  (let* ((at-node (treesit-node-at (point))))
+    (if (not (member (treesit-node-text at-node) '("&&" "||")))
+        (beep)
+      (let* ((binary-expr-node (treesit-node-parent at-node))
+             ;; 1. negate binary expression
+             (binary-parent-node (treesit-node-parent binary-expr-node))
+             (binary-grandparent-node (treesit-node-parent binary-parent-node))
+             (expr-marker (make-marker)))
+        (set-marker expr-marker (point))
+        (cond
+         ((and (equal (treesit-node-type binary-parent-node) "parenthesized_expression")
+               (equal (treesit-node-type binary-grandparent-node) "unary_expression")
+               (equal (treesit-node-text
+                       (treesit-node-child-by-field-name binary-grandparent-node "operator"))
+                      "!"))
+          ;; binary expression is in parenthesis, and that is being negated
+          (let ((excl-node (treesit-node-child-by-field-name binary-grandparent-node "operator")))
+            (delete-region (treesit-node-start excl-node)
+                           (treesit-node-end excl-node))))
+         ((equal (treesit-node-type binary-parent-node) "parenthesized_expression")
+          ;; binary expression is in parenthesis
+          (goto-char (treesit-node-start binary-parent-node))
+          (insert "!"))
+         (t
+          ;; binary expression is not in parenthesis
+          (let ((binary-expr-start-marker (make-marker))
+                (binary-expr-end-marker (make-marker)))
+            (set-marker binary-expr-start-marker (treesit-node-start binary-expr-node))
+            (set-marker binary-expr-end-marker (treesit-node-end binary-expr-node))
+            (goto-char binary-expr-start-marker)
+            (insert "!(")
+            (goto-char binary-expr-end-marker)
+            (insert ")"))))
+        (dolist (field '("left" "right"))
+          (goto-char expr-marker)
+          (let* ((at-node (treesit-node-at (point)))
+                 (binary-expr-node (treesit-node-parent at-node))
+                 (child-expr-node (treesit-node-child-by-field-name binary-expr-node field)))
+            (cond
+             ((and (equal (treesit-node-type child-expr-node) "unary_expression")
+                   (equal (treesit-node-text
+                           (treesit-node-child-by-field-name child-expr-node "operator")) "!"))
+              ;; remove the negation
+              (let ((excl-node (treesit-node-child-by-field-name child-expr-node "operator")))
+                (delete-region (treesit-node-start excl-node)
+                               (treesit-node-end excl-node))))
+             ((equal (treesit-node-type child-expr-node) "true")
+              ;; just insert a "!"
+              (goto-char (treesit-node-start child-expr-node))
+              (delete-region (treesit-node-start child-expr-node)
+                             (treesit-node-end child-expr-node))
+              (insert "false"))
+             ((equal (treesit-node-type child-expr-node) "false")
+              ;; just insert a "!"
+              (goto-char (treesit-node-start child-expr-node))
+              (delete-region (treesit-node-start child-expr-node)
+                             (treesit-node-end child-expr-node))
+              (insert "true"))
+             ((equal (treesit-node-type child-expr-node) "parenthesized_expression")
+              ;; binary expression is in parenthesis
+              (goto-char (treesit-node-start child-expr-node))
+              (insert "!"))
+             ((member (treesit-node-type child-expr-node) '("call_expression" "identifier" "selector_expression"))
+              ;; just insert a "!"
+              (goto-char (treesit-node-start child-expr-node))
+              (insert "!"))
+             (t
+              ;; just insert a "!"
+              (let ((expr-start (make-marker))
+                    (expr-end (make-marker)))
+                (set-marker expr-start (treesit-node-start child-expr-node))
+                (set-marker expr-end (treesit-node-end child-expr-node))
+                (goto-char expr-start)
+                (insert "!(")
+                (goto-char expr-end)
+                (insert ")"))))))
+        (goto-char expr-marker)))))
+
+(defun go-beast-fix-eol-commas ()
+  "Add missing end-of-line commas where needed."
+  (let* ((root-node (treesit-buffer-root-node))
+         (capture (treesit-query-capture
+                   root-node
+                   '((keyed_element) @elem
+                     (literal_element) @lit-elem))))
+    (save-excursion
+      (let ((insertions '()))
+        (pcase-dolist (`(_ . ,elem) capture)
+          (goto-char (treesit-node-end elem))
+          (when (eolp)
+            (let ((marker (make-marker)))
+              (set-marker marker (point))
+              (push marker insertions))))
+        (dolist (insertion insertions)
+          (goto-char insertion)
+          (when (not (looking-at ","))
+            (insert ",")))))))
+
+
+;;; Go Test Generators
+
+(defun go-beast--test-file-name ()
+  "Return the file name of the test fale for the current buffer."
+  (let* ((file-name (buffer-file-name))
+         (directory (file-name-directory file-name))
+         (base (file-name-base file-name))
+         (extension (file-name-extension file-name)))
+    (unless (equal extension "go")
+      (error "Not in Go file"))
+    (when (string-suffix-p "_test" base)
+      file-name)
+    (let* ((test-base (concat base "_test")))
+      (file-name-concat
+       directory
+       (concat test-base ".go")))))
+
+(defun go-beast--get-file-buffer-create (file-name)
+  "Return a buffer for the current buffers test file.
+This function creates a new file with the correct initialization
+if the file doesn't already exist."
+  (let* ((ret-buffer (generate-new-buffer "*go-test*")))
+    (unless (file-exists-p file-name)
+      (let* ((package-id (go-beast--get-package-id)))
+        (with-temp-file file-name
+          (insert (format "package %s" package-id)))))
+    (with-current-buffer ret-buffer
+      (insert-file-contents file-name)
+      (treesit-parser-create 'go))
+    ret-buffer))
+
+(defun go-beats--test-input-type-code (params)
+  "Generate the \"type _ struct\" portion of the test from PARAMS."
+  (pcase-let ((`(,names ,types) params)) 
+    (with-temp-buffer
+      (insert (format "\ttype args struct {\n"))
+      (seq-mapn
+       (lambda (name type)
+         (insert (format "\t\t%s %s\n" name (go-beast--type-to-string type))))
+       names types)
+      (insert "\t}\n")
+      (buffer-string))))
+
+(defun go-beast--test-args-code (params)
+  "Return PARAMS formatted for table test.
+For example, if the function has params a and b, this funcion
+returns \"tt.args.a, tt.args.b\"."
+  (pcase-let ((`(,names _)  params))
+    (string-join
+     (seq-map
+      (lambda (name)
+        (format "tt.args.%s" name))
+      names)
+     ", ")))
+
+(defun go-beast--generate-function-test (func-node)
+  "Generate a test for a Go function."
+  (let* ((test-file-name (go-beast--test-file-name))
+         (name (treesit-node-text (treesit-node-child-by-field-name func-node "name")))
+         (buf (go-beast--get-test-buffer-create test-file-name))
+         (params (treesit-node-child-by-field-name func-node "parameters"))
+         (result (treesit-node-child-by-field-name func-node "result"))
+         (resolved-params (go-beast--resolve-params params))
+         (resolved-result (go-beast--resolve-result result))
+         (test-name (concat "Test" (capitalize name)))
+         (input-type-str (go-beats--test-input-type-code resolved-params)))
+    (when (or (not (listp resolved-result))
+              (not (listp (car resolved-result))))
+      (setq resolved-result (list resolved-result)))
+    (with-current-buffer buf
+      (goto-char (point-max))
+      (insert "\n")
+      (insert (format "func %s(t *testing.T) {\n" test-name))
+      (insert input-type-str)
+      (insert "\ttests := []struct {\n")
+      (insert "\t\tname string\n")
+      (insert "\t\targs args\n")
+      (let ((n 1))
+        (dolist (result resolved-result)
+          (if (= n 1)
+              (insert (format "\t\twant %s\n" (go-beast--type-to-string result)))
+            (insert (format "\t\twant%d %s\n" n (go-beast--type-to-string result))))
+          (cl-incf n)))
+      (insert "\t}{\n")
+      (insert "\t\t// TODO : Add test cases.\n")
+      (insert "\t}\n")
+      (insert "\tfor _, tt := range tests {\n")
+      (insert "\t\tt.Run(tt.name, func(t *testing.T) {\n")
+      (if (> (length resolved-result) 1)
+          (let ((gots (seq-map (lambda (n)
+                                 (if (= n 1)
+                                     "got"
+                                   (format "got%d" n)))
+                               (number-sequence 1 (length resolved-result)))))
+            (insert "\t\t\t%s = %s(%s)" (string-join gots ", ") name (go-beast--test-args-code resolved-params))
+            (dolist (got gots)
+              (let ((want (string-replace "got" "want" got)))
+                (insert "\t\t\tif !reflect.DeepEqual(got, tt.%s) {\n" want)
+                (insert "\t\t\t\tt.Errorf(\"%s() %s = %%v, %s %%v\", got, tt.%s)\n" name got want want)
+                (insert "\t\t\t}\n"))))
+        (insert
+         (format "\t\t\tif got := %s(%s); !reflect.DeepEqual(got, tt.want) {\n"
+                 name (go-beast--test-args-code resolved-params)))
+        (insert (format "\t\t\t\tt.Errorf(\"%s() = %%v, want %%v\", got, tt.want)\n" name))
+        (insert "\t\t\t}\n"))
+      (insert "\t\t})\n")
+      (insert "\t}\n")
+      (insert "}\n")
+      (write-file test-file-name))))
+
+(defun go-beast-generate-test ()
+  "Generate a test for the current item."
+  (let* ((at-node (treesit-node-at (point)))
+         (top-level (or (treesit-node-top-level at-node "function_declaration")
+                        (treesit-node-top-level at-node "method_declaration")
+                        (treesit-node-top-level at-node "type_declaration"))))
+    (pcase (treesit-node-type top-level)
+      ("function_declaration" (go-beast--generate-function-test top-level))
+      ("method_declaration")
+      ("type_declaration"))
+    top-level))
 
 (provide 'go-beast)
 
