@@ -45,6 +45,12 @@ separated by new-lines."
   :group 'go-beast
   :type 'string)
 
+(defun go-beast--capitalize (str)
+  "Capitalize the first letter of STR."
+  (concat
+   (upcase (substring str 0 1))
+   (substring str 1)))
+
 (defun go-beast--parent-function (node)
   "Return the parent of node that is of type `function_declaration'."
   (treesit-parent-until
@@ -665,18 +671,18 @@ Results are returned in the form:
                   results)))
         results))))
 
-(defun go-beast--insert-interface-defs (reciever interfaces)
-  "Insert generated Go code of INTERFACES at point for RECIEVER.
+(defun go-beast--insert-interface-defs (receiver interfaces)
+  "Insert generated Go code of INTERFACES at point for RECEIVER.
 INTERFACES should be in the form as provided from the function
 `go-beast--fetch-interface-def'."
-  (let* ((reciever-name (treesit-node-text reciever))
-         (reciever-letter (downcase (substring reciever-name 0 1))))
+  (let* ((receiver-name (treesit-node-text receiver))
+         (receiver-letter (downcase (substring receiver-name 0 1))))
     (save-excursion
       (insert "\n\n")
       (pcase-dolist (`(,name ,params ,result) interfaces)
         (insert (format "func (%s %s) %s%s %s {\n\tpanic(\"not implemented\")\n}\n\n"
-                        reciever-letter
-                        reciever-name
+                        receiver-letter
+                        receiver-name
                         name
                         params
                         result)))
@@ -953,7 +959,7 @@ INTERFACES should be in the form as provided from the function
                     "type_declaration"))
          (_ (unless at-declr
               (user-error "No Type at point")))
-         (reciever-symbol
+         (receiver-symbol
           (alist-get 'name (treesit-query-capture
                             at-declr
                             '((type_spec name: (_) @name)))))
@@ -988,7 +994,7 @@ INTERFACES should be in the form as provided from the function
          (selected-symbol (nth 1 (string-split selection ":")))
          (interfaces (go-beast--fetch-interface-def selected-file selected-symbol)))
     (goto-char (treesit-node-end at-declr))
-    (go-beast--insert-interface-defs reciever-symbol interfaces)))
+    (go-beast--insert-interface-defs receiver-symbol interfaces)))
 
 (defun go-beast-demorgans-law ()
   "Use demorgans law to toggle the operators && and ||. "
@@ -1147,7 +1153,7 @@ returns \"tt.args.a, tt.args.b\"."
       names)
      ", ")))
 
-(defun go-beast--generate-function-test (func-node)
+(defun go-beast--generate-function-test (func-node &optional receiver-name receiver-type)
   "Generate a test for a Go function."
   (let* ((test-file-name (go-beast--test-file-name))
          (name (treesit-node-text (treesit-node-child-by-field-name func-node "name")))
@@ -1156,11 +1162,12 @@ returns \"tt.args.a, tt.args.b\"."
          (result (treesit-node-child-by-field-name func-node "result"))
          (resolved-params (go-beast--resolve-params params))
          (resolved-result (go-beast--resolve-result result))
-         (test-name (concat "Test" (capitalize name)))
+         (test-name (concat "Test" (go-beast--capitalize name)))
          (input-type-str (go-beats--test-input-type-code resolved-params)))
-    (when (or (not (listp resolved-result))
-              (not (listp (car resolved-result))))
+    (when (not (listp resolved-result))
       (setq resolved-result (list resolved-result)))
+    (when (eql (car resolved-result) 'parameters)
+      (setq resolved-result (cdr resolved-result)))
     (with-current-buffer buf
       (goto-char (point-max))
       (insert "\n")
@@ -1180,39 +1187,98 @@ returns \"tt.args.a, tt.args.b\"."
       (insert "\t}\n")
       (insert "\tfor _, tt := range tests {\n")
       (insert "\t\tt.Run(tt.name, func(t *testing.T) {\n")
-      (if (> (length resolved-result) 1)
-          (let ((gots (seq-map (lambda (n)
-                                 (if (= n 1)
-                                     "got"
-                                   (format "got%d" n)))
-                               (number-sequence 1 (length resolved-result)))))
-            (insert "\t\t\t%s = %s(%s)" (string-join gots ", ") name (go-beast--test-args-code resolved-params))
-            (dolist (got gots)
-              (let ((want (string-replace "got" "want" got)))
-                (insert "\t\t\tif !reflect.DeepEqual(got, tt.%s) {\n" want)
-                (insert "\t\t\t\tt.Errorf(\"%s() %s = %%v, %s %%v\", got, tt.%s)\n" name got want want)
-                (insert "\t\t\t}\n"))))
+      (when receiver-name
         (insert
-         (format "\t\t\tif got := %s(%s); !reflect.DeepEqual(got, tt.want) {\n"
-                 name (go-beast--test-args-code resolved-params)))
-        (insert (format "\t\t\t\tt.Errorf(\"%s() = %%v, want %%v\", got, tt.want)\n" name))
-        (insert "\t\t\t}\n"))
+         (format "\t\t\t%s := %s{}\n"
+                 receiver-name
+                 (string-replace "*" "&" (go-beast--type-to-string receiver-type)))))
+      (let ((receiver (if receiver-name (concat receiver-name ".") "")))
+        (if (> (length resolved-result) 1)
+            (let ((gots (seq-map (lambda (n)
+                                   (if (= n 1)
+                                       "got"
+                                     (format "got%d" n)))
+                                 (number-sequence 1 (length resolved-result)))))
+              (insert (format "\t\t\t%s = %s%s(%s)\n" (string-join gots ", ") receiver name (go-beast--test-args-code resolved-params)))
+              (dolist (got gots)
+                (let ((want (string-replace "got" "want" got)))
+                  (insert (format "\t\t\tif !reflect.DeepEqual(got, tt.%s) {\n" want))
+                  (insert (format "\t\t\t\tt.Errorf(\"%s() %s = %%v, %s %%v\", got, tt.%s)\n" name got want want))
+                  (insert "\t\t\t}\n"))))
+          (insert
+           (format "\t\t\tif got := %s%s(%s); !reflect.DeepEqual(got, tt.want) {\n"
+                   receiver name (go-beast--test-args-code resolved-params)))
+          (insert (format "\t\t\t\tt.Errorf(\"%s() = %%v, want %%v\", got, tt.want)\n" name))
+          (insert "\t\t\t}\n")))
       (insert "\t\t})\n")
       (insert "\t}\n")
       (insert "}\n")
       (write-file test-file-name))))
 
+(defun go-beast--generate-method-test (method-node &optional receiver-name receiver-type)
+  "Generate a test for a Go function."
+  (let* ((receiver-node (treesit-node-child-by-field-name method-node "receiver"))
+         (receiver-params (go-beast--resolve-params receiver-node)))
+    (seq-let (names types) receiver-params
+      (go-beast--generate-function-test method-node (car names) (car types)))))
+
 (defun go-beast-generate-test ()
   "Generate a test for the current item."
+  (interactive)
   (let* ((at-node (treesit-node-at (point)))
          (top-level (or (treesit-node-top-level at-node "function_declaration")
                         (treesit-node-top-level at-node "method_declaration")
                         (treesit-node-top-level at-node "type_declaration"))))
     (pcase (treesit-node-type top-level)
       ("function_declaration" (go-beast--generate-function-test top-level))
-      ("method_declaration")
-      ("type_declaration"))
+      ("method_declaration" (go-beast--generate-method-test top-level)))
     top-level))
+
+(defun go-beast-jump-to-parameters ()
+  "Move the point to the parameters of the current function."
+  (interactive)
+  (let* ((at-node (treesit-node-at (point)))
+         (top-level (or (treesit-node-top-level at-node "function_declaration")
+                        (treesit-node-top-level at-node "method_declaration")))
+         (params-node (treesit-node-child-by-field-name top-level "parameters")))
+    (goto-char (1- (treesit-node-end params-node)))))
+
+(defun go-beast-jump-to-result ()
+  "Move the point to the result of the current function."
+  (interactive)
+  (let* ((at-node (treesit-node-at (point)))
+         (top-level (or (treesit-node-top-level at-node "function_declaration")
+                        (treesit-node-top-level at-node "method_declaration")))
+         (params-node (treesit-node-child-by-field-name top-level "parameters"))
+         (result-node (treesit-node-child-by-field-name top-level "result")))
+    (cond
+     ((and result-node
+           (equal (treesit-node-type result-node) "parameter_list"))
+      (goto-char (1- (treesit-node-end result-node))))
+     (result-node
+      (goto-char (treesit-node-end result-node)))
+     (t
+      (goto-char (1+ (treesit-node-end params-node)))))))
+
+(defun go-beast-jump-to-test ()
+  "Move the point the current functiosn test."
+  (interactive)
+  (let* ((at-node (treesit-node-at (point)))
+         (top-level (or (treesit-node-top-level at-node "function_declaration")
+                        (treesit-node-top-level at-node "method_declaration")))
+         (name (treesit-node-text (treesit-node-child-by-field-name top-level "name")))
+         (test-name (concat "Test" (go-beast--capitalize name)))
+         (test-file-name (go-beast--test-file-name))
+         (file-buf (find-file-noselect test-file-name)))
+    (set-buffer file-buf)
+    (goto-char (point-min))
+    (unless (search-forward test-name nil t)
+      (goto-char (point-max))
+      (insert (format "\nfunc %s(t *testing.T) {\n\t" test-name))
+      (let ((pt (point)))
+        (insert "\n}")
+        (goto-char pt)))
+    (switch-to-buffer file-buf)))
 
 (provide 'go-beast)
 
