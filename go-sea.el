@@ -1,10 +1,10 @@
-;;; go-beast.el --- IDE Features for Go -*- lexical-binding: t -*-
+;;; go-sea.el --- IDE Features for Go -*- lexical-binding: t -*-
 
 ;; Author: Zachary Romero
 ;; Maintainer: Zachary Romero
 ;; Version: 0.1.0
 ;; Package-Requires: ()
-;; Homepage: https://github.com/zkry/go-beast
+;; Homepage: https://github.com/zkry/go-sea
 ;; Keywords: 
 
 
@@ -32,26 +32,26 @@
 
 (require 'treesit)
 
-(defgroup go-beast nil
+(defgroup go-sea nil
   "Go advanced editing capabilities"
-  :prefix "go-beast-"
+  :prefix "go-sea-"
   :group 'applications)
 
-(defcustom go-beast-symbol-search-pattern
+(defcustom go-sea-symbol-search-pattern
   "ag '%s' -l -w"
   "Command-line program to search entire project for a symbol.
 This command should return only the file-names of the results
 separated by new-lines."
-  :group 'go-beast
+  :group 'go-sea
   :type 'string)
 
-(defun go-beast--capitalize (str)
+(defun go-sea--capitalize (str)
   "Capitalize the first letter of STR."
   (concat
    (upcase (substring str 0 1))
    (substring str 1)))
 
-(defun go-beast--parent-function (node)
+(defun go-sea--parent-function (node)
   "Return the parent of node that is of type `function_declaration'."
   (treesit-parent-until
    node
@@ -63,16 +63,16 @@ separated by new-lines."
          (equal (treesit-node-type node)
                 "func_literal")))))
 
-(defun go-beast--type-to-string (type)
+(defun go-sea--type-to-string (type)
   "Return string of data representaiton of TYPE."
   (pcase type
     (`(slice ,sub-type)
-     (concat "[]" (go-beast--type-to-string sub-type)))
+     (concat "[]" (go-sea--type-to-string sub-type)))
     (`(map ,key-type ,val-type)
-     (concat "map[" (go-beast--type-to-string key-type) "]"
-             (go-beast--type-to-string val-type)))
+     (concat "map[" (go-sea--type-to-string key-type) "]"
+             (go-sea--type-to-string val-type)))
     (`(pointer-type ,sub-type)
-     (concat "*" (go-beast--type-to-string sub-type)))
+     (concat "*" (go-sea--type-to-string sub-type)))
     (_ type)))
 
 ;; Lisp object representation of Go types:
@@ -83,7 +83,7 @@ separated by new-lines."
 ;;   Multiple: (int, int , []int) -> (parameters "int" "int" (slice "int"))
 ;;   Pointer: *int -> (pointer "int")
 
-(defun go-beast--resolve-result (result-node)
+(defun go-sea--resolve-result (result-node)
   "Return lisp data representing the return types of RESULT-NODE."
   (pcase (treesit-node-type result-node)
     ("type_identifier" (treesit-node-text result-node))
@@ -93,7 +93,7 @@ separated by new-lines."
                        (treesit-query-capture
                         result-node
                         '((slice_type element: (_) @elt))))))
-       (list 'slice (go-beast--resolve-result element-node))))
+       (list 'slice (go-sea--resolve-result element-node))))
     ("pointer_type"
      (let ((subtype-node
             (alist-get 'subtype
@@ -101,7 +101,7 @@ separated by new-lines."
                         result-node
                         '((pointer-type (_) @subtype :anchor))))))
        (list 'pointer
-             (go-beast--resolve-result subtype-node))))
+             (go-sea--resolve-result subtype-node))))
     ("map_type"
      (let* ((map-kv (treesit-query-capture
                      result-node
@@ -109,18 +109,18 @@ separated by new-lines."
             (key-node (alist-get 'key map-kv))
             (val-node (alist-get 'val map-kv)))
        (list 'map
-             (go-beast--resolve-result key-node)
-             (go-beast--resolve-result val-node))))
+             (go-sea--resolve-result key-node)
+             (go-sea--resolve-result val-node))))
     ("parameter_list"
      (let* ((types
              (seq-map #'cdr
                       (treesit-query-capture
                        result-node
                        '((parameter_declaration type: (_) @type))))))
-       (append '(parameters) (seq-map #'go-beast--resolve-result types))))
+       (append '(parameters) (seq-map #'go-sea--resolve-result types))))
     (_ 'unknown*)))
 
-(defun go-beast--resolve-params (parameters-node)
+(defun go-sea--resolve-params (parameters-node)
   "Return lisp data representing the parameter types of PARAMETERS-NODE.
 Results are in the form of (PARAM-NAMES PARAM-TYPES).  The names
 are a list of strings and the types are in the same form as the
@@ -138,7 +138,7 @@ return type data."
                           declr
                           '((parameter_declaration
                              (_) @type :anchor)))))
-             (resolved-type (go-beast--resolve-result type))
+             (resolved-type (go-sea--resolve-result type))
              (identifiers
               (seq-map #'treesit-node-text
                (seq-map #'cdr
@@ -149,16 +149,16 @@ return type data."
         (setq parameters (append parameters identifiers))))
     (list parameters types)))
 
-(defconst go-beast--numeric-types
+(defconst go-sea--numeric-types
   '("uint8" "uint16" "uint32" "uint64" "int8" "int16" "int32" "int64" "float32" "float64"
     "complex64" "complex128" "byte" "rune" "uint" "int" "uintptr"))
 
-(defun go-beast--zero-value (type &optional err-name)
+(defun go-sea--zero-value (type &optional err-name)
   "Return the Go zero-value for TYPE."
   (pcase type
     ((pred
       (lambda (type)
-        (member type go-beast--numeric-types)))
+        (member type go-sea--numeric-types)))
      "0")
     ("error"
      (if err-name
@@ -179,33 +179,33 @@ return type data."
         (and (listp type)
              (eql (car type) 'parameters))))
      (string-join (seq-map (lambda (elt)
-                             (go-beast--zero-value elt err-name))
+                             (go-sea--zero-value elt err-name))
                            (cdr type))
                   ", "))))
 
-(defconst go-beast-numeric-types
+(defconst go-sea-numeric-types
   '(uint8 uint16 uint32 uint64 int8 int16 int32 int64 float32 float64
           complex64 complex128 byte rune uint int uintptr))
 
-(defun go-beast--function-return-types (node)
+(defun go-sea--function-return-types (node)
   "Return lisp data representing the return types of NODE."
   (let* ((func-result
           (alist-get 'result (treesit-query-capture
                               node
                               '((function_declaration result: (_) @result)
                                 (method_declaration result: (_) @result))))))
-    (go-beast--resolve-result func-result)))
+    (go-sea--resolve-result func-result)))
 
-(defun go-beast-insert-error ()
+(defun go-sea-insert-error ()
   "Insert an error at point according to the return type."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
-         (func-node (go-beast--parent-function at-node)))
+         (func-node (go-sea--parent-function at-node)))
     (if (not func-node)
         (beep)
-      (let* ((return (go-beast--function-return-types func-node))
+      (let* ((return (go-sea--function-return-types func-node))
              ;; TODO: extract name of error so it isn't always "err"
-             (return-str (go-beast--zero-value return "err"))
+             (return-str (go-sea--zero-value return "err"))
              (indent (save-excursion (back-to-indentation) (buffer-substring-no-properties (pos-bol) (point)))))
         (unless (looking-at "\n")
           (end-of-line)
@@ -214,7 +214,7 @@ return type data."
         (insert indent "\t" "return " return-str "\n")
         (insert indent "}")))))
 
-(defun go-beast--to-short-var-declaration (declr-node)
+(defun go-sea--to-short-var-declaration (declr-node)
   "Convert the var declaration to a short-var declaration."
   (save-excursion
     (let* ((var-data (treesit-query-capture declr-node '((var_declaration "var" @var (var_spec "=" @equal)))))
@@ -234,7 +234,7 @@ return type data."
       (set-marker var-marker nil)
       (set-marker equal-marker nil))))
 
-(defun go-beast--to-var-declaration (declr-node)
+(defun go-sea--to-var-declaration (declr-node)
   "Convert short-var declaration to var declaration."
   (save-excursion
     (let* ((var-data (treesit-query-capture declr-node '((short_var_declaration ":=" @equal))))
@@ -248,7 +248,7 @@ return type data."
       (delete-char 1)
       (set-marker equal-marker nil))))
 
-(defun go-beast--zero-value-for-type (type-str)
+(defun go-sea--zero-value-for-type (type-str)
   "Return the string of the zero value for TYPE-STR."
   (ignore-errors
     (with-temp-buffer
@@ -256,9 +256,9 @@ return type data."
       (go-ts-mode)
       (let* ((root-node (treesit-buffer-root-node))
              (type-node (alist-get 'type (treesit-query-capture root-node '((var_declaration (var_spec type: (_) @type)))))))
-        (go-beast--zero-value (go-beast--resolve-result type-node))))))
+        (go-sea--zero-value (go-sea--resolve-result type-node))))))
 
-(defun go-beast--ensure-import (import-path)
+(defun go-sea--ensure-import (import-path)
   "For the current file, ensure that IMPORT-PATH is being imported."
   (save-excursion
     (let* ((root-node (treesit-buffer-root-node))
@@ -286,7 +286,7 @@ return type data."
               (goto-char (treesit-node-end pkg-node))
               (insert "\n\n" (format "import \"%s\"" import-path)))))))))
 
-(defun go-beast-top-level-forms ()
+(defun go-sea-top-level-forms ()
   "Return a list of the top level form nodes for the file."
   (let* ((root-node (treesit-buffer-root-node))
          (capture (treesit-query-capture
@@ -305,10 +305,10 @@ return type data."
 
 ;;; Move file helpers
 
-(defvar go-beast-refactor-context nil
+(defvar go-sea-refactor-context nil
   "Intermediary context for performing project-wide refactoring.")
 
-(defun go-beast-flush-refactor-context ()
+(defun go-sea-flush-refactor-context ()
   "Write out the pending changes to files."
   (maphash
    (lambda (file-name buffer)
@@ -317,18 +317,18 @@ return type data."
         (with-current-buffer buffer
           (buffer-string))))
      (kill-buffer buffer))
-   go-beast-refactor-context))
+   go-sea-refactor-context))
 
-(defmacro go-beast-with-refactor-context (&rest body)
+(defmacro go-sea-with-refactor-context (&rest body)
   (declare (debug t))
-  `(let ((go-beast-refactor-context (make-hash-table :test 'equal)))
+  `(let ((go-sea-refactor-context (make-hash-table :test 'equal)))
      ,@body
-     (go-beast-flush-refactor-context)))
+     (go-sea-flush-refactor-context)))
 
-(defun go-beast-get-refactor-buffer-create (file-name)
-  (unless go-beast-refactor-context
+(defun go-sea-get-refactor-buffer-create (file-name)
+  (unless go-sea-refactor-context
     (error "no refactoring context"))
-  (let ((buf (gethash file-name go-beast-refactor-context)))
+  (let ((buf (gethash file-name go-sea-refactor-context)))
     (if buf
         buf
       (let ((new-buf (generate-new-buffer (file-name-nondirectory file-name) )))
@@ -336,35 +336,35 @@ return type data."
           (insert-file-contents file-name)
           (treesit-parser-create 'go)
           (goto-char (point-min)))
-        (puthash file-name new-buf go-beast-refactor-context)
+        (puthash file-name new-buf go-sea-refactor-context)
         new-buf))))
 
-(defmacro go-beast-with-go-ts-file (file-name &rest body)
+(defmacro go-sea-with-go-ts-file (file-name &rest body)
   "BODY is executed in a buffer with contents of FILE-NAME.
 Tree-sitter is enabled for buffer."
   (declare (indent 1) (debug t))
   `(progn
-     (let ((buf (go-beast-get-refactor-buffer-create ,file-name)))
+     (let ((buf (go-sea-get-refactor-buffer-create ,file-name)))
        (with-current-buffer buf
          ,@body))))
 
-(defun go-beast--mod-root ()
+(defun go-sea--mod-root ()
   (string-trim-right (shell-command-to-string "go list -m -f '{{.Dir}}'")))
 
-(defun go-beast--mod-pkg-root ()
+(defun go-sea--mod-pkg-root ()
   (string-trim-right (shell-command-to-string "go list -m -f '{{ .Path }} '")))
 
-(defun go-beast-find-references (symbol package from-path new-path)
+(defun go-sea-find-references (symbol package from-path new-path)
   "Find all references to SYMBOL of go-mod PACKAGE.
 The result is a list of matches in other packages and matches in
 the same package."
   (if (equal from-path new-path)
       '(nil nil nil)
     (let* ((original-directory default-directory)
-           (default-directory (go-beast--mod-root))
+           (default-directory (go-sea--mod-root))
            (files (seq-remove
                    #'string-blank-p
-                   (string-lines (string-trim-right (shell-command-to-string (format go-beast-symbol-search-pattern symbol))))))
+                   (string-lines (string-trim-right (shell-command-to-string (format go-sea-symbol-search-pattern symbol))))))
            (matches '())
            (same-to-pkg-matches '())
            (same-from-pkg-matches))
@@ -372,7 +372,7 @@ the same package."
         (let ((path (concat default-directory "/" file)) ;; TODO: more generic join (windows)
               (from-same-pkg-p (equal (file-name-directory file) from-path))
               (to-same-pkg-p (equal (file-name-directory file) new-path)))
-          (go-beast-with-go-ts-file (file-name-concat default-directory file)
+          (go-sea-with-go-ts-file (file-name-concat default-directory file)
             (save-excursion
               (goto-char (point-min))
               (treesit-parser-create 'go)
@@ -436,7 +436,7 @@ the same package."
                     (goto-char (match-end 0)))))))))
       (list matches same-from-pkg-matches same-to-pkg-matches))))
 
-(defun go-beast--get-symbol-to-move ()
+(defun go-sea--get-symbol-to-move ()
   "Returns the symbol at point to be moved."
   (let ((at-node (treesit-node-at (point))))
     (cond
@@ -449,7 +449,7 @@ the same package."
                    "type_spec")
         (cons 'type (treesit-node-text at-node)))))))
 
-(defun go-beast--move-symbol-top-node (node)
+(defun go-sea--move-symbol-top-node (node)
   (cond
    ((equal (treesit-node-type node) "identifier")
     (treesit-node-top-level
@@ -460,7 +460,7 @@ the same package."
      node
      "type_declaration"))))
 
-(defun go-beast--commenting-node (node)
+(defun go-sea--commenting-node (node)
   "Given a node, return its comment if it exists."
   (save-excursion
     (goto-char (treesit-node-start node))
@@ -469,7 +469,7 @@ the same package."
       (when (equal (treesit-node-type at-node) "comment")
         at-node))))
 
-(defun go-beast--get-package-id ()
+(defun go-sea--get-package-id ()
   "Return the packge ID of the current file."
   (let* ((root-node (treesit-buffer-root-node))
          (id-node (alist-get 'id
@@ -481,14 +481,14 @@ the same package."
       (let ((dir-parts (file-name-split (file-name-directory (buffer-file-name)))))
         (nth (- (length dir-parts) 2) dir-parts)))))
 
-(defun go-beast--package-id-for-file (file-name)
+(defun go-sea--package-id-for-file (file-name)
   "Return the package id for the current file."
-  (go-beast-with-go-ts-file file-name
+  (go-sea-with-go-ts-file file-name
     (go-ts-mode)
     (go-baest--get-package-id)))
 
-(defun go-beast--select-toplevel-form ()
-  (let* ((top-level-nodes (go-beast-top-level-forms))
+(defun go-sea--select-toplevel-form ()
+  (let* ((top-level-nodes (go-sea-top-level-forms))
          (names (seq-map #'treesit-node-text top-level-nodes))
          (selection (completing-read-multiple "Select items to move: " names)))
     ;; TODO: is it possible to have a type and function have a same name?
@@ -497,13 +497,13 @@ the same package."
        (member (treesit-node-text node) selection))
      top-level-nodes)))
 
-(defun go-beast--move-items (file-name to-move-items)
+(defun go-sea--move-items (file-name to-move-items)
   "Move the symbol to another package, updating references."
-  (go-beast-with-refactor-context
+  (go-sea-with-refactor-context
    (let* ((to-move-symbols (seq-map #'treesit-node-text to-move-items))
-          (mod-root (go-beast--mod-root))
+          (mod-root (go-sea--mod-root))
           (pkg-path (string-trim-left default-directory (concat (regexp-quote mod-root) "/*")))
-          (package-name (string-trim-right (file-name-concat (go-beast--mod-pkg-root) pkg-path) "/")))
+          (package-name (string-trim-right (file-name-concat (go-sea--mod-pkg-root) pkg-path) "/")))
      (unless (not (equal mod-root ""))
        (user-error "Unable to find go-mod."))
      (unless to-move-items
@@ -511,8 +511,8 @@ the same package."
      (let ((deletions '())
            (insertions '()))
        (dolist (move-item-node to-move-items)
-         (let* ((top-level-node (go-beast--move-symbol-top-node move-item-node))
-                (comment-node (go-beast--commenting-node top-level-node))
+         (let* ((top-level-node (go-sea--move-symbol-top-node move-item-node))
+                (comment-node (go-sea--commenting-node top-level-node))
                 (top-level-text (if comment-node
                                     (concat (treesit-node-text comment-node)
                                             "\n"
@@ -530,27 +530,27 @@ the same package."
        (pcase-dolist (`(,start . ,end) deletions)
          (delete-region start end))
        (save-buffer)
-       (let* ((new-pkg-id (go-beast--package-id-for-file file-name))
+       (let* ((new-pkg-id (go-sea--package-id-for-file file-name))
               (new-pkg-directory (file-name-directory file-name))
               (new-pkg-path (string-trim-left new-pkg-directory (concat (regexp-quote mod-root) "/*")))
-              (new-pkg-name (string-trim-right (concat (go-beast--mod-pkg-root) "/" new-pkg-path) "/")))
+              (new-pkg-name (string-trim-right (concat (go-sea--mod-pkg-root) "/" new-pkg-path) "/")))
          (dolist (symbol to-move-symbols)
-           (let ((symbol-references (go-beast-find-references symbol package-name pkg-path new-pkg-path)))
+           (let ((symbol-references (go-sea-find-references symbol package-name pkg-path new-pkg-path)))
              (pcase-let ((`(,matches ,from-same-pkg-matches ,to-same-pkg-matches) symbol-references))
                (dolist (match matches)
                  (pcase-let ((`(,file . ,pt) match))
-                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                   (go-sea-with-go-ts-file (concat mod-root "/" file)
                      (goto-char pt)
                      (let* ((at-node (treesit-node-at (point)))
                             (start (treesit-node-start at-node))
                             (end (treesit-node-end at-node)))
                        (delete-region start (1+ end))
                        (insert new-pkg-id "."))
-                     (go-beast--ensure-import new-pkg-name))))
+                     (go-sea--ensure-import new-pkg-name))))
                ;; remove package since the symbol is moving to here
                (dolist (match to-same-pkg-matches)
                  (pcase-let ((`(,file . ,pt) match))
-                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                   (go-sea-with-go-ts-file (concat mod-root "/" file)
                      (goto-char pt)
                      (let* ((at-node (treesit-node-at (point)))
                             (start (treesit-node-start at-node))
@@ -559,11 +559,11 @@ the same package."
                ;; add package since before there was no symbol
                (dolist (match from-same-pkg-matches)
                  (pcase-let ((`(,file . ,pt) match))
-                   (go-beast-with-go-ts-file (concat mod-root "/" file)
+                   (go-sea-with-go-ts-file (concat mod-root "/" file)
                      (goto-char pt)
                      (insert new-pkg-id ".")
-                     (go-beast--ensure-import new-pkg-name)))))))
-         (go-beast-with-go-ts-file file-name
+                     (go-sea--ensure-import new-pkg-name)))))))
+         (go-sea-with-go-ts-file file-name
            (go-ts-mode)
            (goto-char (point-max))
            (insert "\n\n")
@@ -573,17 +573,17 @@ the same package."
 
 ;;; Implement interface helpers
 
-(defconst go-beast-standard-lib-interfaces-cache nil)
+(defconst go-sea-standard-lib-interfaces-cache nil)
 
-(defun go-beast-go-env (var)
+(defun go-sea-go-env (var)
   "Fetch the value of the go env value of VAR."
   (let* ((data (json-parse-string (shell-command-to-string "go env -json"))))
     (gethash var data)))
 
-(defun go-beast--standard-lib-interfaces ()
-  (let* ((src-dir (file-name-concat (go-beast-go-env "GOROOT") "src"))
+(defun go-sea--standard-lib-interfaces ()
+  (let* ((src-dir (file-name-concat (go-sea-go-env "GOROOT") "src"))
          (default-directory src-dir)
-         (interfaces (go-beast--list-project-interfaces))
+         (interfaces (go-sea--list-project-interfaces))
          (usable-interfaces
           (seq-remove
            (lambda (item)
@@ -596,14 +596,14 @@ the same package."
                 (string-match-p "/cmd/" file)
                 (string-match-p "_test.go" file))))
            interfaces)))
-    (setq go-beast-standard-lib-interfaces-cache usable-interfaces)
+    (setq go-sea-standard-lib-interfaces-cache usable-interfaces)
     usable-interfaces))
 
-(defun go-beast--list-project-interfaces ()
+(defun go-sea--list-project-interfaces ()
   "Return a list of all interface names."
   (let* ((res '())
-         (mod-root (go-beast--mod-root))
-         (pkg-root (go-beast--mod-pkg-root))
+         (mod-root (go-sea--mod-root))
+         (pkg-root (go-sea--mod-pkg-root))
          (relative-directory (string-trim-left default-directory
                                                (regexp-quote (concat mod-root "/")))))
     ;; Private
@@ -633,14 +633,14 @@ the same package."
         (forward-line 1))
       res)))
 
-(defun go-beast-subtract-directory (full base)
+(defun go-sea-subtract-directory (full base)
   (string-trim-left full (concat (regexp-quote base) "/*")))
 
-(defun go-beast--fetch-interface-def (file interface)
+(defun go-sea--fetch-interface-def (file interface)
   "Fetch the definition of INTERFACE located in FILE.
 Results are returned in the form:
 (NAME PARAMS RESULT)."
-  (let* ((mod-root (go-beast--mod-root)))
+  (let* ((mod-root (go-sea--mod-root)))
     (with-temp-buffer
       (insert-file-contents file)
       (treesit-parser-create 'go)
@@ -671,10 +671,10 @@ Results are returned in the form:
                   results)))
         results))))
 
-(defun go-beast--insert-interface-defs (receiver interfaces)
+(defun go-sea--insert-interface-defs (receiver interfaces)
   "Insert generated Go code of INTERFACES at point for RECEIVER.
 INTERFACES should be in the form as provided from the function
-`go-beast--fetch-interface-def'."
+`go-sea--fetch-interface-def'."
   (let* ((receiver-name (treesit-node-text receiver))
          (receiver-letter (downcase (substring receiver-name 0 1))))
     (save-excursion
@@ -692,13 +692,13 @@ INTERFACES should be in the form as provided from the function
 
 ;;; Commands:
 
-(defun go-beast-refactor-move (file-name)
+(defun go-sea-refactor-move (file-name)
   "Move the symbol to another package, updating references."
   (interactive "F")
-  (let* ((to-move-items (go-beast--select-toplevel-form)))
-    (go-beast--move-items file-name to-move-items)))
+  (let* ((to-move-items (go-sea--select-toplevel-form)))
+    (go-sea--move-items file-name to-move-items)))
 
-(defun go-beast-toggle-var-declaration ()
+(defun go-sea-toggle-var-declaration ()
   "Toggle the type of variable declaration at point."
   (interactive)
   (let*  ((at-node (treesit-node-at (point)))
@@ -708,16 +708,16 @@ INTERFACES should be in the form as provided from the function
                          (or (equal (treesit-node-type node) "var_declaration")
                              (equal (treesit-node-type node) "short_var_declaration"))))))
     (if (equal (treesit-node-type declr-node) "var_declaration")
-        (go-beast--to-short-var-declaration declr-node)
-      (go-beast--to-var-declaration declr-node))))
+        (go-sea--to-short-var-declaration declr-node)
+      (go-sea--to-var-declaration declr-node))))
 
 ;; TODO: Refactor this to be smaller
-(defun go-beast-add-return-type (type)
+(defun go-sea-add-return-type (type)
   "Add a new return type to the function."
   (interactive "sType:")
-  (let*  ((zero-value (go-beast--zero-value-for-type type))
+  (let*  ((zero-value (go-sea--zero-value-for-type type))
           (at-node (treesit-node-at (point)))
-          (func-node (go-beast--parent-function at-node))
+          (func-node (go-sea--parent-function at-node))
           (multiple-args nil))
     (unless zero-value
       (cond
@@ -764,33 +764,49 @@ INTERFACES should be in the form as provided from the function
               (insert ", " type ")")))))
         ;; Part 2: Add zero value to each return
         (let* ((at-node (treesit-node-at (point)))
-               (func-node (go-beast--parent-function at-node))
+               (func-node (go-sea--parent-function at-node))
                (return-statements
                 (treesit-query-capture
                  func-node
                  '((return_statement) @return)))
                (markers '()))
           (pcase-dolist (`(return . ,node) return-statements)
-            (when (treesit-node-eq func-node (go-beast--parent-function node))
+            (when (treesit-node-eq func-node (go-sea--parent-function node))
               (let ((marker (make-marker)))
                 (set-marker marker (treesit-node-end node))
                 (push marker markers))))
           (dolist (marker markers)
             (goto-char marker)
-            (if multiple-args
+            (if (and multiple-args (not (looking-back "return" (- (point) 10))))
                 (insert ", " zero-value)
               (insert " " zero-value))))))))
 
-(defun go-beast-add-error-return ()
+(defun go-sea-add-error-return ()
   "Add an error return type to the current function."
   (interactive)
-  (go-beast-add-return-type "error"))
+  (go-sea-add-return-type "error"))
 
-(defun go-beast-remove-return-type ()
+(defun go-sea-toggle-error-return ()
+  "Add an error return type to the current function."
+  (interactive)
+  (let* ((at-node (treesit-node-at (point)))
+         (top-level (or (treesit-node-top-level at-node "function_declaration")
+                        (treesit-node-top-level at-node "method_declaration")))
+         (result-node (treesit-node-child-by-field-name top-level "result"))
+         (err-capture
+          (treesit-query-capture
+           result-node
+           '(((type_identifier) @tid
+              (:equal @tid "error"))))))
+    (if err-capture
+        (go-sea-remove-return-type)
+      (go-sea-add-return-type "error"))))
+
+(defun go-sea-remove-return-type ()
   "Remove the last return item for the current function."
   (interactive)
   (let*  ((at-node (treesit-node-at (point)))
-          (func-node (go-beast--parent-function at-node)))
+          (func-node (go-sea--parent-function at-node)))
     (if (not func-node)
         (beep)
       (save-excursion
@@ -827,14 +843,14 @@ INTERFACES should be in the form as provided from the function
                              (treesit-node-end result))))))
         ;; Part 2: Add zero value to each return
         (let* ((at-node (treesit-node-at (point)))
-               (func-node (go-beast--parent-function at-node))
+               (func-node (go-sea--parent-function at-node))
                (return-statements
                 (treesit-query-capture
                  func-node
                  '((return_statement) @return)))
                (markers '()))
           (pcase-dolist (`(return . ,node) return-statements)
-            (when (treesit-node-eq func-node (go-beast--parent-function node))
+            (when (treesit-node-eq func-node (go-sea--parent-function node))
               (let ((marker (make-marker)))
                 (set-marker marker (treesit-node-start node))
                 (push marker markers))))
@@ -856,7 +872,7 @@ INTERFACES should be in the form as provided from the function
                 (setq start (treesit-node-start return-expr-node)))
               (delete-region start end))))))))
 
-(defun go-beast-flip-if ()
+(defun go-sea-flip-if ()
   "Flip the if and else clauses."
   (interactive)
   (save-excursion
@@ -922,7 +938,7 @@ INTERFACES should be in the form as provided from the function
                             consequence-end-marker alternative-start-marker alternative-end-marker))
         (set-marker marker nil)))))
 
-(defun go-beast-add-else ()
+(defun go-sea-add-else ()
   "Add else clause."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
@@ -951,7 +967,7 @@ INTERFACES should be in the form as provided from the function
         (insert " {\n\n" indent "}")
         (goto-char resume-pt)))))
 
-(defun go-beast-implement-interface ()
+(defun go-sea-implement-interface ()
   "Add stub functions to implement an interface."
   (interactive)
   (let* ((at-declr (treesit-node-top-level
@@ -964,11 +980,11 @@ INTERFACES should be in the form as provided from the function
                             at-declr
                             '((type_spec name: (_) @name)))))
          ;; TODO - prompt type if no type at point
-         (project-interfaces (go-beast--list-project-interfaces))
-         (mod-root (go-beast--mod-root))
-         (pkg-root (go-beast--mod-pkg-root))
-         (std-interfaces (go-beast--standard-lib-interfaces))
-         (go-env-root (go-beast-go-env "GOROOT"))
+         (project-interfaces (go-sea--list-project-interfaces))
+         (mod-root (go-sea--mod-root))
+         (pkg-root (go-sea--mod-pkg-root))
+         (std-interfaces (go-sea--standard-lib-interfaces))
+         (go-env-root (go-sea-go-env "GOROOT"))
          (completions+files (seq-map
                              (lambda (item)
                                (let ((file (car item))
@@ -979,11 +995,11 @@ INTERFACES should be in the form as provided from the function
                                           symbol)
                                   (cond
                                    ((string-prefix-p pkg-root file)
-                                    (file-name-concat mod-root (go-beast-subtract-directory file pkg-root)))
+                                    (file-name-concat mod-root (go-sea-subtract-directory file pkg-root)))
                                    ((string-prefix-p "std/" file)
                                     (file-name-concat go-env-root
                                                       "src"
-                                                      (go-beast-subtract-directory file "std")))
+                                                      (go-sea-subtract-directory file "std")))
                                    (t file)))))
                              (append project-interfaces std-interfaces)))
          (selection (completing-read
@@ -992,11 +1008,11 @@ INTERFACES should be in the form as provided from the function
                      nil t))
          (selected-file (alist-get selection completions+files nil nil 'equal))
          (selected-symbol (nth 1 (string-split selection ":")))
-         (interfaces (go-beast--fetch-interface-def selected-file selected-symbol)))
+         (interfaces (go-sea--fetch-interface-def selected-file selected-symbol)))
     (goto-char (treesit-node-end at-declr))
-    (go-beast--insert-interface-defs receiver-symbol interfaces)))
+    (go-sea--insert-interface-defs receiver-symbol interfaces)))
 
-(defun go-beast-demorgans-law ()
+(defun go-sea-demorgans-law ()
   "Use demorgans law to toggle the operators && and ||. "
   (interactive)
   (let* ((at-node (treesit-node-at (point))))
@@ -1077,7 +1093,7 @@ INTERFACES should be in the form as provided from the function
                 (insert ")"))))))
         (goto-char expr-marker)))))
 
-(defun go-beast-fix-eol-commas ()
+(defun go-sea-fix-eol-commas ()
   "Add missing end-of-line commas where needed."
   (let* ((root-node (treesit-buffer-root-node))
          (capture (treesit-query-capture
@@ -1100,7 +1116,7 @@ INTERFACES should be in the form as provided from the function
 
 ;;; Go Test Generators
 
-(defun go-beast--test-file-name ()
+(defun go-sea--test-file-name ()
   "Return the file name of the test fale for the current buffer."
   (let* ((file-name (buffer-file-name))
          (directory (file-name-directory file-name))
@@ -1115,13 +1131,13 @@ INTERFACES should be in the form as provided from the function
        directory
        (concat test-base ".go")))))
 
-(defun go-beast--get-file-buffer-create (file-name)
+(defun go-sea--get-file-buffer-create (file-name)
   "Return a buffer for the current buffers test file.
 This function creates a new file with the correct initialization
 if the file doesn't already exist."
   (let* ((ret-buffer (generate-new-buffer "*go-test*")))
     (unless (file-exists-p file-name)
-      (let* ((package-id (go-beast--get-package-id)))
+      (let* ((package-id (go-sea--get-package-id)))
         (with-temp-file file-name
           (insert (format "package %s" package-id)))))
     (with-current-buffer ret-buffer
@@ -1136,12 +1152,12 @@ if the file doesn't already exist."
       (insert (format "\ttype args struct {\n"))
       (seq-mapn
        (lambda (name type)
-         (insert (format "\t\t%s %s\n" name (go-beast--type-to-string type))))
+         (insert (format "\t\t%s %s\n" name (go-sea--type-to-string type))))
        names types)
       (insert "\t}\n")
       (buffer-string))))
 
-(defun go-beast--test-args-code (params)
+(defun go-sea--test-args-code (params)
   "Return PARAMS formatted for table test.
 For example, if the function has params a and b, this funcion
 returns \"tt.args.a, tt.args.b\"."
@@ -1153,16 +1169,16 @@ returns \"tt.args.a, tt.args.b\"."
       names)
      ", ")))
 
-(defun go-beast--generate-function-test (func-node &optional receiver-name receiver-type)
+(defun go-sea--generate-function-test (func-node &optional receiver-name receiver-type)
   "Generate a test for a Go function."
-  (let* ((test-file-name (go-beast--test-file-name))
+  (let* ((test-file-name (go-sea--test-file-name))
          (name (treesit-node-text (treesit-node-child-by-field-name func-node "name")))
-         (buf (go-beast--get-test-buffer-create test-file-name))
+         (buf (go-sea--get-test-buffer-create test-file-name))
          (params (treesit-node-child-by-field-name func-node "parameters"))
          (result (treesit-node-child-by-field-name func-node "result"))
-         (resolved-params (go-beast--resolve-params params))
-         (resolved-result (go-beast--resolve-result result))
-         (test-name (concat "Test" (go-beast--capitalize name)))
+         (resolved-params (go-sea--resolve-params params))
+         (resolved-result (go-sea--resolve-result result))
+         (test-name (concat "Test" (go-sea--capitalize name)))
          (input-type-str (go-beats--test-input-type-code resolved-params)))
     (when (not (listp resolved-result))
       (setq resolved-result (list resolved-result)))
@@ -1179,8 +1195,8 @@ returns \"tt.args.a, tt.args.b\"."
       (let ((n 1))
         (dolist (result resolved-result)
           (if (= n 1)
-              (insert (format "\t\twant %s\n" (go-beast--type-to-string result)))
-            (insert (format "\t\twant%d %s\n" n (go-beast--type-to-string result))))
+              (insert (format "\t\twant %s\n" (go-sea--type-to-string result)))
+            (insert (format "\t\twant%d %s\n" n (go-sea--type-to-string result))))
           (cl-incf n)))
       (insert "\t}{\n")
       (insert "\t\t// TODO : Add test cases.\n")
@@ -1191,7 +1207,7 @@ returns \"tt.args.a, tt.args.b\"."
         (insert
          (format "\t\t\t%s := %s{}\n"
                  receiver-name
-                 (string-replace "*" "&" (go-beast--type-to-string receiver-type)))))
+                 (string-replace "*" "&" (go-sea--type-to-string receiver-type)))))
       (let ((receiver (if receiver-name (concat receiver-name ".") "")))
         (if (> (length resolved-result) 1)
             (let ((gots (seq-map (lambda (n)
@@ -1199,7 +1215,7 @@ returns \"tt.args.a, tt.args.b\"."
                                        "got"
                                      (format "got%d" n)))
                                  (number-sequence 1 (length resolved-result)))))
-              (insert (format "\t\t\t%s = %s%s(%s)\n" (string-join gots ", ") receiver name (go-beast--test-args-code resolved-params)))
+              (insert (format "\t\t\t%s = %s%s(%s)\n" (string-join gots ", ") receiver name (go-sea--test-args-code resolved-params)))
               (dolist (got gots)
                 (let ((want (string-replace "got" "want" got)))
                   (insert (format "\t\t\tif !reflect.DeepEqual(got, tt.%s) {\n" want))
@@ -1207,7 +1223,7 @@ returns \"tt.args.a, tt.args.b\"."
                   (insert "\t\t\t}\n"))))
           (insert
            (format "\t\t\tif got := %s%s(%s); !reflect.DeepEqual(got, tt.want) {\n"
-                   receiver name (go-beast--test-args-code resolved-params)))
+                   receiver name (go-sea--test-args-code resolved-params)))
           (insert (format "\t\t\t\tt.Errorf(\"%s() = %%v, want %%v\", got, tt.want)\n" name))
           (insert "\t\t\t}\n")))
       (insert "\t\t})\n")
@@ -1215,14 +1231,14 @@ returns \"tt.args.a, tt.args.b\"."
       (insert "}\n")
       (write-file test-file-name))))
 
-(defun go-beast--generate-method-test (method-node &optional receiver-name receiver-type)
+(defun go-sea--generate-method-test (method-node &optional receiver-name receiver-type)
   "Generate a test for a Go function."
   (let* ((receiver-node (treesit-node-child-by-field-name method-node "receiver"))
-         (receiver-params (go-beast--resolve-params receiver-node)))
+         (receiver-params (go-sea--resolve-params receiver-node)))
     (seq-let (names types) receiver-params
-      (go-beast--generate-function-test method-node (car names) (car types)))))
+      (go-sea--generate-function-test method-node (car names) (car types)))))
 
-(defun go-beast-generate-test ()
+(defun go-sea-generate-test ()
   "Generate a test for the current item."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
@@ -1230,11 +1246,14 @@ returns \"tt.args.a, tt.args.b\"."
                         (treesit-node-top-level at-node "method_declaration")
                         (treesit-node-top-level at-node "type_declaration"))))
     (pcase (treesit-node-type top-level)
-      ("function_declaration" (go-beast--generate-function-test top-level))
-      ("method_declaration" (go-beast--generate-method-test top-level)))
+      ("function_declaration" (go-sea--generate-function-test top-level))
+      ("method_declaration" (go-sea--generate-method-test top-level)))
     top-level))
 
-(defun go-beast-jump-to-parameters ()
+
+;;; Jump Commands
+
+(defun go-sea-jump-to-parameters ()
   "Move the point to the parameters of the current function."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
@@ -1243,7 +1262,7 @@ returns \"tt.args.a, tt.args.b\"."
          (params-node (treesit-node-child-by-field-name top-level "parameters")))
     (goto-char (1- (treesit-node-end params-node)))))
 
-(defun go-beast-jump-to-result ()
+(defun go-sea-jump-to-result ()
   "Move the point to the result of the current function."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
@@ -1260,15 +1279,15 @@ returns \"tt.args.a, tt.args.b\"."
      (t
       (goto-char (1+ (treesit-node-end params-node)))))))
 
-(defun go-beast-jump-to-test ()
+(defun go-sea-jump-to-test ()
   "Move the point the current functiosn test."
   (interactive)
   (let* ((at-node (treesit-node-at (point)))
          (top-level (or (treesit-node-top-level at-node "function_declaration")
                         (treesit-node-top-level at-node "method_declaration")))
          (name (treesit-node-text (treesit-node-child-by-field-name top-level "name")))
-         (test-name (concat "Test" (go-beast--capitalize name)))
-         (test-file-name (go-beast--test-file-name))
+         (test-name (concat "Test" (go-sea--capitalize name)))
+         (test-file-name (go-sea--test-file-name))
          (file-buf (find-file-noselect test-file-name)))
     (set-buffer file-buf)
     (goto-char (point-min))
@@ -1280,6 +1299,6 @@ returns \"tt.args.a, tt.args.b\"."
         (goto-char pt)))
     (switch-to-buffer file-buf)))
 
-(provide 'go-beast)
+(provide 'go-sea)
 
-;;; go-beast.el ends here
+;;; go-sea.el ends here
