@@ -1299,6 +1299,95 @@ returns \"tt.args.a, tt.args.b\"."
         (goto-char pt)))
     (switch-to-buffer file-buf)))
 
+(defun go-sea--fold-shorttext (body-children-nodes)
+  "Return a shorttext for a block of Go code."
+  (let ((first-item (car body-children-nodes)))
+    (cond
+     ((equal (treesit-node-type first-item) "return_statement")
+      (let* ((capture (alist-get 'expression-list
+                                 (treesit-query-capture
+                                  first-item
+                                  '((return_statement (expression_list) @expression-list))))))
+        (if capture
+            (concat ": " (treesit-node-text capture))
+          ": ↩ ")))
+     (t "..."))))
+
+(defun go-sea--fold-modification (ov afterp beg end &optional len)
+  (delete-overlay ov))
+
+(defun go-sea-fold-at-line ()
+  (interactive)
+  (when (memq (char-before (pos-eol)) '(?{ ?}))
+    (let* ((eol-node (treesit-node-at (1- (pos-eol)))))
+      (cond
+       ((or (equal (treesit-node-type eol-node) "{")
+            (equal (treesit-node-type eol-node) "}"))
+        (let* ((block-node (treesit-node-parent eol-node))
+               (first-child-node (cond
+                                  ((equal (treesit-node-type block-node) "expression_switch_statement")
+                                   (alist-get 'lbrace (treesit-query-capture block-node '((expression_switch_statement "{" @lbrace)))))
+                                  ((equal (treesit-node-type block-node) "block")
+                                   (car (treesit-node-children block-node)))))
+               (last-child-node (car (last (treesit-node-children block-node))))
+               (body-children (cdr (butlast (treesit-node-children block-node))))
+               (ov (make-overlay (treesit-node-end first-child-node) (treesit-node-start last-child-node)))
+               (shorttext (go-sea--fold-shorttext body-children)))
+          (unless (seq-find
+                   (lambda (ov)
+                     (eq (overlay-get ov 'go-sea-overlay-type) 'fold))
+                   (overlays-at (1+ (treesit-node-end first-child-node))))
+            (set-text-properties 0 (length shorttext) nil shorttext)
+            (overlay-put ov 'invisible t)
+            (overlay-put ov 'after-string (propertize shorttext 'font-lock-face 'highlight))
+            (overlay-put ov 'face 'highlight)
+            (overlay-put ov 'modification-hooks (list #'go-sea--fold-modification))
+            (overlay-put ov 'go-sea-overlay-type 'fold))))
+       (t (beep))))))
+
+(defun go-sea--top-level-function-nodes ()
+  (seq-map #'cdr (treesit-query-capture
+                  (treesit-buffer-root-node)
+                  '((source_file (function_declaration) @functions)))))
+
+(defun go-sea--fold-node (node)
+  "Fold the block at the line of node."
+  (let* ((capture (alist-get 'block-open
+                             (treesit-query-capture node '((function_declaration
+                                                            (block "{" @block-open)))))))
+    (when capture
+      (save-excursion
+        (goto-char (treesit-node-start capture))
+        (go-sea-fold-at-line)))))
+
+(defun go-sea-fold-all-functions ()
+  "Fold all functions in the current file."
+  (interactive)
+  (let* ((func-nodes (go-sea--top-level-function-nodes)))
+    (dolist (node func-nodes)
+      (go-sea--fold-node node))))
+
+(defun go-sea-unfold-all ()
+  "Fold all functions in the current file."
+  (interactive)
+  (let* ((all-ovs (overlays-in (point-min) (point-max)))
+         (fold-ovs (seq-filter (lambda (ov)
+                                 (eql (overlay-get ov 'go-sea-overlay-type) 'fold))
+                               all-ovs)))
+    (dolist (ov fold-ovs)
+      (delete-overlay ov))))
+
+(defun go-sea-toggle-fold-at-line ()
+  (interactive)
+  (let* ((line-ovs (append (overlays-at (1+ (pos-eol)))
+                           (overlays-at (1- (pos-bol)))))
+         (fold-ov (seq-find (lambda (ov)
+                              (eq (overlay-get ov 'go-sea-overlay-type) 'fold))
+                            line-ovs)))
+    (if fold-ov
+        (delete-overlay fold-ov)
+      (go-sea-fold-at-line))))
+
 (provide 'go-sea)
 
 ;;; go-sea.el ends here
