@@ -1301,7 +1301,12 @@ returns \"tt.args.a, tt.args.b\"."
 
 (defun go-sea--fold-shorttext (body-children-nodes)
   "Return a shorttext for a block of Go code."
-  (let ((first-item (car body-children-nodes)))
+  (let* ((non-comment-nodes
+          (seq-remove
+           (lambda (node)
+             (equal (treesit-node-type node) "comment"))
+           body-children-nodes))
+         (first-item (car non-comment-nodes)))
     (cond
      ((equal (treesit-node-type first-item) "return_statement")
       (let* ((capture (alist-get 'expression-list
@@ -1311,7 +1316,25 @@ returns \"tt.args.a, tt.args.b\"."
         (if capture
             (concat ": " (treesit-node-text capture))
           ": ↩ ")))
-     (t "..."))))
+     (t 
+      (concat
+       ": "
+       (string-join
+        (seq-map
+         (lambda (node)
+           (pcase (treesit-node-type node)
+             ("if_statement" "?")
+             ("assignment_statement" "=")
+             ("call_expression" "○")
+             ("for_statement" "↺")
+             ("return_statement" "↩")
+             ("var_declaration" "v")
+             ("short_var_declaration" "v")
+             ("unary_expression" "!")
+             ("type_switch_statement" "┆")
+             ("expression_switch_statement" "┆")))
+         body-children-nodes)
+        " "))))))
 
 (defun go-sea--fold-modification (ov afterp beg end &optional len)
   (delete-overlay ov))
@@ -1353,8 +1376,7 @@ returns \"tt.args.a, tt.args.b\"."
 (defun go-sea--fold-node (node)
   "Fold the block at the line of node."
   (let* ((capture (alist-get 'block-open
-                             (treesit-query-capture node '((function_declaration
-                                                            (block "{" @block-open)))))))
+                             (treesit-query-capture node '((block "{" @block-open))))))
     (when capture
       (save-excursion
         (goto-char (treesit-node-start capture))
@@ -1387,6 +1409,62 @@ returns \"tt.args.a, tt.args.b\"."
     (if fold-ov
         (delete-overlay fold-ov)
       (go-sea-fold-at-line))))
+
+(defun go-sea--fold-node-level (level node)
+  "Fold the treesitter NODE to LEVEL."
+  (pcase (treesit-node-type node)
+    ;; if BLOCK, fold each child of block at LEVEL.
+    ("block"
+     (let* ((node-children (treesit-node-children node)))
+       (if (= level 0)
+           (go-sea--fold-node node)
+         (dolist (child node-children)
+           (go-sea--fold-node-level (1- level) child)))))
+    ("short_var_declaration"
+     (let* ((right-node (treesit-node-child-by-field-name node "right")))
+       (go-sea--fold-node-level level right-node)))
+    ("expression_list"
+     (let* ((expr-nodes (treesit-node-children node)))
+       (dolist (child expr-nodes)
+         (go-sea--fold-node-level level child))))
+    ("func_literal"
+     (go-sea--fold-node-level level (treesit-node-child-by-field-name node "body")))
+    ("if_statement"
+     (go-sea--fold-node-level level (treesit-node-child-by-field-name node "consequence"))
+     (go-sea--fold-node-level level (treesit-node-child-by-field-name node "alternative")))
+    ("call_expression"
+     (let* ((args-node (treesit-node-child-by-field-name node "arguments")))
+       (go-sea--fold-node-level level (treesit-node-child-by-field-name node "arguments"))))
+    ("argument_list"
+     (let* ((children (treesit-node-children node)))
+       (dolist (child children)
+         (go-sea--fold-node-level level child))))
+    ("var_declaration"
+     (let* ((value-node (treesit-node-child-by-field-name node "value")))
+       (go-sea--fold-node-level level value-node)))
+    ("for_statement"
+     (let* ((body-node (treesit-node-child-by-field-name node "body")))
+       (go-sea--fold-node-level level body-node)))
+    ("assignment_statement"
+     (let* ((right-node (treesit-node-child-by-field-name node "right")))
+       (go-sea--fold-node-level level right-node)))
+    ((or "type_switch_statement" "expression_switch_statement")
+     (let* ((children (treesit-node-children node)))
+       (dolist (child children)
+         (go-sea--fold-node-level level child))))
+    ((pred stringp)
+     (let* ((children (treesit-node-children node)))
+       (dolist (child children)
+         (go-sea--fold-node-level level child))))))
+
+(defun go-sea-fold-level (level)
+  "Fold the entire buffer to LEVEL.
+For example, if LEVEL is 1, this function folds the first block
+in every function."
+  (let* ((func-nodes (go-sea--top-level-function-nodes)))
+    (dolist (node func-nodes)
+      (let* ((func-body (treesit-node-child-by-field-name node "body")))
+        (go-sea--fold-node-level level func-body)))))
 
 (provide 'go-sea)
 
