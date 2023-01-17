@@ -38,11 +38,18 @@
   :prefix "go-sea-"
   :group 'applications)
 
+(defcustom go-sea-search-engine 'ag
+  "Search engine to use for global symbol search."
+  :group 'go-sea
+  :type '(choice (const :tag "Silver Searcher" ag)
+                 (const :tag "Rip Grep" rg)))
+
 (defcustom go-sea-symbol-search-pattern
   "ag '%s' -l -w"
   "Command-line program to search entire project for a symbol.
 This command should return only the file-names of the results
-separated by new-lines."
+separated by new-lines.  You can also use ripgrep as follows:
+rg 'ResolveContainerPort' -l -w"
   :group 'go-sea
   :type 'string)
 
@@ -371,9 +378,13 @@ FROM-PATH and NEW-PATH."
   (if (equal from-path new-path)
       '(nil nil nil)
     (let* ((default-directory (go-sea--mod-root))
+           (search-pattern (pcase go-sea-search-engine
+                             ('ag "ag '%s' -l -w")
+                             ('rg "rg '%s' -l -w")
+                             (_ (error "Unsupported search engine %s" go-sea-search-engine))))
            (files (seq-remove
                    #'string-blank-p
-                   (string-lines (string-trim-right (shell-command-to-string (format go-sea-symbol-search-pattern symbol))))))
+                   (string-lines (string-trim-right (shell-command-to-string (format search-pattern symbol))))))
            (matches '())
            (same-to-pkg-matches '())
            (same-from-pkg-matches))
@@ -619,7 +630,10 @@ FROM-PATH and NEW-PATH."
     ;; Private
     (with-temp-buffer
       (call-process "ag" nil (current-buffer) t
-                    "^type [a-z][a-zA-Z0-9_]*.* interface {$"
+                    (pcase go-sea-search-engine
+                      ('ag "^type [a-z][a-zA-Z0-9_]*.* interface {$")
+                      ('rg "^type [a-z][a-zA-Z0-9_]*.* interface \\{$")
+                      (_ (error "Unsupported search engine %s" go-sea-search-engine)))
                     "--depth" "1")
       (save-excursion
         (goto-char (point-min))
@@ -629,7 +643,9 @@ FROM-PATH and NEW-PATH."
           (forward-line 1)))
       (let ((default-directory mod-root))
         (call-process "ag" nil (current-buffer) t
-                      "^type [A-Z][a-zA-Z0-9_]*.* interface {$"))
+                      (pcase go-sea-search-engine
+                        ('ag "^type [A-Z][a-zA-Z0-9_]*.* interface {$")
+                        ('rg "^type [A-Z][a-zA-Z0-9_]*.* interface \\{$"))))
       (goto-char (point-min))
       (while (not (eobp))
         (let* ((line (buffer-substring (pos-bol) (pos-eol)))
