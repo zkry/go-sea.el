@@ -32,6 +32,7 @@
 ;;; Code:
 
 (require 'treesit)
+(require 'go-sea-src)
 
 (defgroup go-sea nil
   "Go advanced editing capabilities."
@@ -629,7 +630,7 @@ FROM-PATH and NEW-PATH."
                                                (regexp-quote (concat mod-root "/")))))
     ;; Private
     (with-temp-buffer
-      (call-process "ag" nil (current-buffer) t
+      (call-process "ag" nil (current-buffer) t ;; TODO: fixme for rg
                     (pcase go-sea-search-engine
                       ('ag "^type [a-z][a-zA-Z0-9_]*.* interface {$")
                       ('rg "^type [a-z][a-zA-Z0-9_]*.* interface \\{$")
@@ -683,6 +684,9 @@ Results are returned in the form:
            (method-specs (treesit-query-capture
                           interface-type-node
                           `((method_spec) @method-spec)))
+           (interface-type-names (treesit-query-capture
+                                  interface-type-node
+                                  `((interface_type_name) @type-name)))
            (results '()))
       (dolist (spec method-specs)
         (let ((capture (treesit-query-capture
@@ -695,7 +699,19 @@ Results are returned in the form:
                       (treesit-node-text (alist-get 'parameters capture))
                       (treesit-node-text (alist-get 'result capture)))
                 results)))
-      results)))
+      (let ((interface-names (seq-map #'cdr interface-type-names)))
+        (dolist (name interface-names)
+          (pcase-let* ((default-directory (file-name-directory file))
+                       (`(,location ,_line-no) (go-sea-src-find-definition
+                                                (alist-get 'tid
+                                                           (treesit-query-capture name '((type_identifier) @tid))))))
+            (with-temp-buffer
+              (let* ((interface-name (treesit-node-text name t))
+                     (interface-parts (string-split interface-name  "\\."))
+                     (interface-raw-name (if (= (length interface-parts) 2) (cadr interface-parts) interface-name))
+                     (subresults (go-sea--fetch-interface-def location interface-raw-name)))
+                (setq results (append subresults results))))))
+      results))))
 
 (defun go-sea--insert-interface-defs (receiver interfaces)
   "Insert generated Go code of INTERFACES at point for RECEIVER.
@@ -706,12 +722,13 @@ INTERFACES should be in the form as provided from the function
     (save-excursion
       (insert "\n\n")
       (pcase-dolist (`(,name ,params ,result) interfaces)
-        (insert (format "func (%s %s) %s%s %s {\n\tpanic(\"not implemented\")\n}\n\n"
+        (insert (format "func (%s %s) %s%s %s%s{\n\tpanic(\"not implemented\")\n}\n\n"
                         receiver-letter
                         receiver-name
                         name
                         params
-                        result)))
+                        (or result "")
+                        (if result " " ""))))
       (while (looking-at-p "\n")
         (delete-char 1)))))
 
