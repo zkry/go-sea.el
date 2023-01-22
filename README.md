@@ -27,6 +27,12 @@ a feature requset.  I'd love to hear them**.
 
 ## Demo
 
+### go-sea-refactor-move
+
+![Move function to another file](./docs/go-sea-refactor-move.gif)
+
+Move a definition to another package, updating references.
+
 ### go-sea-insert-error
 
 ![Insert an error](./docs/go-sea-insert-error.gif)
@@ -115,8 +121,6 @@ Fold entire buffer to specific level.
 
 ## Ideas for features
 
-- Fold Go code and if result is one-line, show it after the fold (like
-  GoLand folding)
 - Generate types from JSON
 - More small code refactorings
 - Parse special document comments (like links)
