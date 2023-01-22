@@ -29,87 +29,87 @@ a feature requset.  I'd love to hear them**.
 
 ### go-sea-insert-error
 
-![./docs/go-sea-insert-error](Insert an error)
+![Insert an error](./docs/go-sea-insert-error.gif)
 
 Insert an "if error != nil, return the error" case, using the zero
 value of the function.
 
 ### go-sea-toggle-var-declaration
 
-![./docs/go-sea-toggle-var-declaration](Toggle var declaration types)
+![Toggle var declaration types](./docs/go-sea-toggle-var-declaration.gif)
 
 Switch between using ":=" and "var" to define a variable.
 
 ### go-sea-add-return-type
 
-![./docs/go-sea-add-return-type](Add return type)
+![Add return type](./docs/go-sea-add-return-type.gif)
 
 Add a return type for the current function, updating all nested return
 statements.
 
 ### go-sea-remove-return-type
 
-![./docs/go-sea-remove-return-type](Remove last return type)
+![Remove last return type](./docs/go-sea-remove-return-type.gif)
 
 Remove the last return item, updating all return statements.
 
 ### go-sea-toggle-error-return
 
-![./docs/go-sea-toggle-error-return](Toggle function error return)
+![Toggle function error return](./docs/go-sea-toggle-error-return.gif)
 
 Toggle the returning of a functions error.
 
 ### go-sea-flip-if
 
-![./docs/go-sea-flip-if](Flip if statement)
+![Flip if statement](./docs/go-sea-flip-if.gif)
 
 Flip the if statement, inverting the condition and swapping blocks.
 
 ### go-sea-add-else
 
-![./docs/go-sea-add-else](Automatically add else statement)
+![Automatically add else statement](./docs/go-sea-add-else.gif)
 
 Add else if clause.
 
 ### go-sea-implement-interface
 
-![./docs/go-sea-implement-interface](Implement interface)
+![Implement interface](./docs/go-sea-implement-interface.gif)
 
 Add implementation stubs for interface.
 
 ### go-sea-demorgans-law
 
-![./docs/go-sea-demorgans-law](distribute not across and/or)
+![distribute not across and/or](./docs/go-sea-demorgans-law.gif)
 
 Toggle between forms `!(A || B)` and `(!A && !B)` or `!(A && B)` and `(!A || !B)`.
 
 ### go-sea-generate-test
 
-![./docs/go-sea-generate-test](Generate test based off of current test.)
+![Generate test based off of current test.](./docs/go-sea-generate-test.gif)
 
 Generate a unit test based off of the current functions signature.
 
 ### go-sea-jump-to-result
 
-![./docs/go-sea-jump-to-result](Jump to function result)
+![Jump to function result](./docs/go-sea-jump-to-result.gif)
 
 Jump to functions return type.
 
 ### go-sea-jump-to-test
 
-![./docs/go-sea-jump-to-test](Find and jump to a functions unit test)
+![Find and jump to a functions unit test](./docs/go-sea-jump-to-test.gif)
 
 Find and jump to a functions unit test.
 
 ### go-sea-fold-at-line
 
-![./docs/go-sea-fold-at-line](Fold code at line)
+![Fold code at line](./docs/go-sea-fold-at-line.gif)
 
 Fold code at line.
 
 ### go-sea-fold-level
 
-![./docs/go-sea-fold-level](Fold code to level)
+![Fold code to level](./docs/go-sea-fold-level.gif)
 
 Fold entire buffer to specific level.
 
