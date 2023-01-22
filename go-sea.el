@@ -328,6 +328,13 @@ type."
        (insert
         (with-current-buffer buffer
           (buffer-string))))
+     ;; run goimports
+     (with-temp-buffer
+       (let ((proc-res (call-process "goimports" nil t nil (expand-file-name file-name)))
+             (tmp-buffer (current-buffer)))
+         (when (= 0 proc-res)
+           (with-temp-file file-name
+             (insert-buffer tmp-buffer)))))
      (kill-buffer buffer))
    go-sea-refactor-context))
 
