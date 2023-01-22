@@ -739,6 +739,7 @@ INTERFACES should be in the form as provided from the function
   "Move selected elements to FILE-NAME, updating references."
   (interactive "F")
   (let* ((to-move-items (go-sea--select-toplevel-form)))
+    (save-some-buffers)
     (go-sea--move-items file-name to-move-items)))
 
 (defun go-sea-toggle-var-declaration ()
