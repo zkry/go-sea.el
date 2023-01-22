@@ -492,9 +492,11 @@ FROM-PATH and NEW-PATH."
   (save-excursion
     (goto-char (treesit-node-start node))
     (forward-line -1)
-    (let ((at-node (treesit-node-at (point))))
-      (when (equal (treesit-node-type at-node) "comment")
-        at-node))))
+    (let ((top-comment-node))
+      (while (equal (treesit-node-type (treesit-node-at (point))) "comment")
+        (setq top-comment-node (treesit-node-at (point)))
+        (forward-line -1))
+      top-comment-node)))
 
 (defun go-sea--get-package-id ()
   "Return the packge ID of the current file."
@@ -551,7 +553,6 @@ FROM-PATH and NEW-PATH."
            (if comment-node
                (set-marker start-marker (treesit-node-start comment-node))
              (set-marker start-marker (treesit-node-start top-level-node)))
-           (set-marker start-marker (treesit-node-start top-level-node))
            (set-marker end-marker (treesit-node-end top-level-node))
            (push (cons start-marker end-marker) deletions)
            (push top-level-text insertions)))
