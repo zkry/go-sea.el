@@ -706,7 +706,10 @@ Results are returned in the form:
                                                 (alist-get 'tid
                                                            (treesit-query-capture name '((type_identifier) @tid))))))
             (with-temp-buffer
-              (let ((subresults (go-sea--fetch-interface-def location (treesit-node-text name t))))
+              (let* ((interface-name (treesit-node-text name t))
+                     (interface-parts (string-split interface-name  "\\."))
+                     (interface-raw-name (if (= (length interface-parts) 2) (cadr interface-parts) interface-name))
+                     (subresults (go-sea--fetch-interface-def location interface-raw-name)))
                 (setq results (append subresults results))))))
       results))))
 
@@ -719,12 +722,13 @@ INTERFACES should be in the form as provided from the function
     (save-excursion
       (insert "\n\n")
       (pcase-dolist (`(,name ,params ,result) interfaces)
-        (insert (format "func (%s %s) %s%s %s {\n\tpanic(\"not implemented\")\n}\n\n"
+        (insert (format "func (%s %s) %s%s %s%s{\n\tpanic(\"not implemented\")\n}\n\n"
                         receiver-letter
                         receiver-name
                         name
                         params
-                        result)))
+                        (or result "")
+                        (if result " " ""))))
       (while (looking-at-p "\n")
         (delete-char 1)))))
 

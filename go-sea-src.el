@@ -21,21 +21,24 @@
 
 ;;; Commentary:
 
-;; Source code helpers for go-sea.
+;; Source code helpers for go-sea.  This package is meant to be a
+;; refactoring of go-sea, containing genaric Go source querying
+;; capabilities to build the IDE features off of.
 
 ;;; Code:
 
 ;;; General Helpers:
 
+(require 'treesit)
+
 (defun go-sea-src-subtract-directory (full base)
-  "Remove file-path BASE from full."
+  "Remove file-path BASE from FULL."
   (string-trim-left full (concat (regexp-quote base) "/*")))
 
 (defun go-sea-src-directory-.. (file-name)
-  "Remove file-path BASE from full."
+  "Return a directory string one above FILE-NAME."
   (let* ((parts (file-name-split file-name))
-         (last-part (car (last parts)))
-         (2nd-last-part (car (last (butlast parts)))))
+         (last-part (car (last parts))))
     (if (equal last-part "")
         (string-join (butlast parts 2) "/")
       (string-join (butlast parts) "/"))))
