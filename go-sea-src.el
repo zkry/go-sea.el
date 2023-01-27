@@ -84,13 +84,20 @@
                             import-path-names))))))
 
 ;;; Indexing Functions
+(defvar go-sea-search-engine)
 (defun go-sea-search-id-def-in-dir (id dir)
   "Return the definition of ID located in directory DIR."
   (with-temp-buffer
     (let* ((default-directory dir)
-           (res (call-process "ag" nil (current-buffer) t
-                              (format "^(?:func|type|var) +%s[\\n ]" id)
-                              "--depth" "1")))
+           (res (cond ((eql go-sea-search-engine 'ag)
+                       (call-process "ag" nil (current-buffer) t
+                                     (format "^(?:func|type|var) +%s[\\n ]" id)
+                                     "--depth" "1"))
+                      ((eql go-sea-search-engine 'rg)
+                       (call-process "rg" nil (current-buffer) t
+                                     (format "^(?:func|type|var) +%s[\\n ]" id)
+                                     "--max-depth" "1"))
+                      (t (error "Invalid `go-sea-search-engine' value")))))
       (unless (= res 0)
         (error "Identifier `%s' not found" id))
       ;; multiple definitions of the same name are not allowed

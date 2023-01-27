@@ -111,7 +111,10 @@ Find and jump to a functions unit test.
 
 ![Fold code at line](./docs/go-sea-fold-at-line.gif)
 
-Fold code at line.
+Fold code at line. If `go-sea-fold-abbrev` is non-nil, the text on the
+fold will show a symbol for each line of code: `?` if statement, `=`
+assignment statement, `○` call expression, `↺` for statement, `↩`
+return statement, `v` var declaration, and `┆` switch statement.
 
 ### go-sea-fold-level
 

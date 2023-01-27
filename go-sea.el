@@ -45,14 +45,10 @@
   :type '(choice (const :tag "Silver Searcher" ag)
                  (const :tag "Rip Grep" rg)))
 
-(defcustom go-sea-symbol-search-pattern
-  "ag '%s' -l -w"
-  "Command-line program to search entire project for a symbol.
-This command should return only the file-names of the results
-separated by new-lines.  You can also use ripgrep as follows:
-rg 'ResolveContainerPort' -l -w"
+(defcustom go-sea-fold-abbrev t
+  "If non-nil, show the abbreviated body symbols when folding."
   :group 'go-sea
-  :type 'string)
+  :type 'boolean)
 
 (defun go-sea--capitalize (str)
   "Capitalize the first letter of STR."
@@ -1401,7 +1397,7 @@ RECEIVER-TYPE should be provided as well."
         (if capture
             (concat ": " (treesit-node-text capture))
           ": ↩ ")))
-     (t 
+     (go-sea-fold-abbrev
       (concat
        ": "
        (string-join
@@ -1419,7 +1415,8 @@ RECEIVER-TYPE should be provided as well."
              ("type_switch_statement" "┆")
              ("expression_switch_statement" "┆")))
          body-children-nodes)
-        " "))))))
+        " ")))
+     (t ": ..."))))
 
 (defun go-sea--fold-modification (ov _afterp _beg _end &optional _len)
   "Delete the fold overlay OV if text modified inside of it."
@@ -1555,7 +1552,7 @@ For example, if LEVEL is 1, this function folds the first block
 in every function."
   (interactive "nFold level:")
   (unless (and (integerp level)
-               (> level 0))
+               (>= level 0))
     (error "Invalid level"))
   (let* ((func-nodes (go-sea--top-level-function-nodes)))
     (dolist (node func-nodes)
