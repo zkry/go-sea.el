@@ -5,7 +5,7 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Homepage: https://github.com/zkry/go-sea
-;; Keywords: 
+;; Keywords: tools
 
 
 ;; This file is not part of GNU Emacs
@@ -26,8 +26,9 @@
 
 ;;; Commentary:
 
-;;; This package provides IDE like features to a Go buffer.
-;;; TODO: write more
+;;; This package provides IDE like features to a Go buffer.  In order
+;;; to run the various commands in this package, you will need to be
+;;; using go-ts-mode, the treesitter version of Go mode.
 
 ;;; Code:
 

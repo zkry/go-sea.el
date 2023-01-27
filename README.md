@@ -8,8 +8,8 @@ this project is to provide every feature a full-fledged IDE such as
 GoLand would provide.  It is intended that you would use go-sea in
 addition to a language server.  The language server would provide the
 core functions of what would be expected from an IDE while go-sea
-provides the missing pieces.  **If you have any ideas, definitely make
-a feature requset.  I'd love to hear them**.
+provides extra refactorings.  **If you have any ideas, definitely make
+a feature request.  I'd love to hear them**.
 
 ## Feature List
 
@@ -122,6 +122,22 @@ return statement, `v` var declaration, and `┆` switch statement.
 
 Fold entire buffer to specific level.
 
+## Installation
+
+This project is very much a work in progress and expect rough edges.
+I don't plan on uploading it to MELPA or ELPA until all these rough
+edges are ironed out and I have tested it personally thoroughly.  That
+being said, if you want to try it out you can install it from source,
+adding the this repository to you load path and running `(require 'go-sea)`.
+You need to have a version of Emacs that supports tree-sitter (29) as well as
+`ag` or `rg` installed.  If you are using `rg` you should set the value
+of `go-sea-search-engine` to `'rg`.
+
+Also there are no default keybinding so you will need to add these yourself.
+
+I plan on providing much more detailed documentation with examples
+before release.
+
 ## Ideas for features
 
 - Generate types from JSON
@@ -129,15 +145,3 @@ Fold entire buffer to specific level.
 - Parse special document comments (like links)
 - Introduce constant
 - Advanced code searching
-
-## Installation
-
-This project is very much a work in progress and expect rough edges.  I
-don't plan on uploading it to MELPA or ELPA until all these rough
-edges are ironed out and I have tested it.  That being said, if you
-want to try it out you can install it from source, adding the
-go-sea.el file to you load path.  You need to have a version of Emacs
-that supports tree-sitter (29) as well as `ag` installed.
-
-I plan on providing much more detailed documentation with examples
-before release.
